@@ -1,0 +1,21 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# foundry
+out/
+cache/
+broadcast/*/31337/
+broadcast/**/dry-run/
+
+# node / vite
+node_modules/
+dist/
+.vercel/
+*.log
+.DS_Store
+# foundry deps (fetched by npm run setup:contracts)
+/lib/openzeppelin-contracts/
+/lib/forge-std/
+.arc-studio/
