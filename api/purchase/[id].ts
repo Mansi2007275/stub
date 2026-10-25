@@ -1,6 +1,6 @@
 import { isHex, size } from "viem";
-import { getChain, STATUS } from "../../lib/server/chain";
-import { handler, jsonSafe } from "../../lib/server/http";
+import { getChain, STATUS } from "../../lib/server/chain.js";
+import { handler, jsonSafe } from "../../lib/server/http.js";
 
 /**
  * GET /api/purchase/:id — public on-chain status, so a buyer whose response was lost can see

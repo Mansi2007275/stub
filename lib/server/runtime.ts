@@ -1,10 +1,10 @@
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { getChain } from "./chain";
-import { secretEnv } from "./env";
-import { geminiGenerator } from "./pitchBrief";
-import { upstashStore } from "./store";
-import type { Deps } from "./callCore";
+import { getChain } from "./chain.js";
+import { secretEnv } from "./env.js";
+import { geminiGenerator } from "./pitchBrief.js";
+import { upstashStore } from "./store.js";
+import type { Deps } from "./callCore.js";
 
 /** Builds production dependencies from env. Secrets never leave the server. */
 export function productionDeps(): Deps {

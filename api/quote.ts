@@ -1,6 +1,6 @@
-import { getChain } from "../lib/server/chain";
-import { handler } from "../lib/server/http";
-import { processQuote } from "../lib/server/quoteCore";
+import { getChain } from "../lib/server/chain.js";
+import { handler } from "../lib/server/http.js";
+import { processQuote } from "../lib/server/quoteCore.js";
 
 /** POST /api/quote { serviceId, buyer } → fresh purchaseId + current price. */
 export default handler(["POST"], async (req, res) => {

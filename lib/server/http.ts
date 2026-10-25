@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { ConfigError } from "./env";
+import { ConfigError } from "./env.js";
 
 /** Wraps a handler: method guard, JSON errors, and no internal details or secrets in responses. */
 export function handler(methods: string[], fn: (req: VercelRequest, res: VercelResponse) => Promise<unknown>) {

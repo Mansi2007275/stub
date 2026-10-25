@@ -1,5 +1,5 @@
-import { getChain } from "../lib/server/chain";
-import { handler, jsonSafe } from "../lib/server/http";
+import { getChain } from "../lib/server/chain.js";
+import { handler, jsonSafe } from "../lib/server/http.js";
 
 /** GET /api/services — every registered service, read straight from the escrow contract. */
 export default handler(["GET"], async (_req, res) => {

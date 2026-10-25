@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { encodePacked, isAddress, keccak256, toHex, type Address, type PublicClient } from "viem";
 import { randomBytes } from "node:crypto";
-import { escrowAbi } from "./escrowAbi";
+import { escrowAbi } from "./escrowAbi.js";
 
 export const QuoteBody = z.object({
   serviceId: z.coerce.bigint().positive(),

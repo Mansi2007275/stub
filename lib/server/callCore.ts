@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { isHex, keccak256, size, stringToBytes, type Address, type Hex, type PublicClient, type WalletClient, type Chain, type Account, type Transport } from "viem";
-import { escrowAbi } from "./escrowAbi";
-import { ProviderError } from "./pitchBrief";
-import { keys, type Store } from "./store";
-import { callMessage, canonicalJson, hashInput, INPUT_MAX, INPUT_MIN, type CallResponse } from "../../shared/protocol";
+import { escrowAbi } from "./escrowAbi.js";
+import { ProviderError } from "./pitchBrief.js";
+import { keys, type Store } from "./store.js";
+import { callMessage, canonicalJson, hashInput, INPUT_MAX, INPUT_MIN, type CallResponse } from "../../shared/protocol.js";
 
 export const CallBody = z.object({
   purchaseId: z.string().refine((v) => isHex(v) && size(v as Hex) === 32, "purchaseId must be bytes32"),

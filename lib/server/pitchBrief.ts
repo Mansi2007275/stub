@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PitchBrief } from "../../shared/protocol";
+import type { PitchBrief } from "../../shared/protocol.js";
 
 /** Strict schema for the Gemini output. Anything else is treated as a provider failure. */
 export const PitchBriefSchema = z.object({
@@ -85,4 +85,4 @@ export function geminiGenerator(apiKey: string, model: string, timeoutMs = 25_00
 
 export class ProviderError extends Error {}
 
-export { canonicalJson } from "../../shared/protocol";
+export { canonicalJson } from "../../shared/protocol.js";

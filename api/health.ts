@@ -1,4 +1,4 @@
-import { handler } from "../lib/server/http";
+import { handler } from "../lib/server/http.js";
 
 /** GET /api/health — tells you which config is present (names only, never values). */
 export default handler(["GET"], async (_req, res) => {

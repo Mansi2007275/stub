@@ -1,6 +1,6 @@
 import type { Address, PublicClient } from "viem";
-import { advanceFeed, emptyDoc, type FeedDoc } from "../../shared/feed";
-import type { Store } from "./store";
+import { advanceFeed, emptyDoc, type FeedDoc } from "../../shared/feed.js";
+import type { Store } from "./store.js";
 
 /**
  * Returns the cached feed, first advancing it by a bounded number of log chunks.

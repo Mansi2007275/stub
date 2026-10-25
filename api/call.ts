@@ -1,7 +1,7 @@
-import { handler } from "../lib/server/http";
-import { processCall } from "../lib/server/callCore";
-import { productionDeps, clientIp } from "../lib/server/runtime";
-import { keys } from "../lib/server/store";
+import { handler } from "../lib/server/http.js";
+import { processCall } from "../lib/server/callCore.js";
+import { productionDeps, clientIp } from "../lib/server/runtime.js";
+import { keys } from "../lib/server/store.js";
 
 const MAX_BODY_BYTES = 8 * 1024;
 const RATE_PER_MINUTE = 20;

@@ -1,7 +1,7 @@
 import { createPublicClient, http } from "viem";
 import { arc, arcTestnet } from "viem/chains";
-import { publicEnv } from "./env";
-import { escrowAbi } from "./escrowAbi";
+import { publicEnv } from "./env.js";
+import { escrowAbi } from "./escrowAbi.js";
 
 export function getChain() {
   const env = publicEnv();

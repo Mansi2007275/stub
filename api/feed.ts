@@ -1,8 +1,8 @@
-import { getChain } from "../lib/server/chain";
-import { handler } from "../lib/server/http";
-import { getFeed } from "../lib/server/feedCore";
-import { upstashStore } from "../lib/server/store";
-import { ConfigError } from "../lib/server/env";
+import { getChain } from "../lib/server/chain.js";
+import { handler } from "../lib/server/http.js";
+import { getFeed } from "../lib/server/feedCore.js";
+import { upstashStore } from "../lib/server/store.js";
+import { ConfigError } from "../lib/server/env.js";
 
 /**
  * GET /api/feed — latest purchases and running totals, built from escrow events.
