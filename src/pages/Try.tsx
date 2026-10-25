@@ -62,7 +62,8 @@ export function Try() {
         setResultHash(out.resultHash);
       } else {
         if (out.refunded) setRefunded(true);
-        setError(ERRORS[out.error] ?? `Call failed: ${out.error}`);
+        const why = typeof out.detail === "string" ? ` (${out.detail})` : "";
+        setError(`${ERRORS[out.error] ?? `Call failed: ${out.error}`}${why}`);
       }
     } catch (e) {
       const msg = (e as { shortMessage?: string; message?: string }).shortMessage ?? (e as Error).message;
