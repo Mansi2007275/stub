@@ -42,7 +42,7 @@ if (useStub) {
   });
 }
 
-const generate = process.env.GEMINI_API_KEY ? geminiDeck(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL ?? "gemini-2.5-flash") : templateDeck;
+const generate = process.env.GEMINI_API_KEY ? geminiDeck(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite") : templateDeck;
 const builder = createDeckBuilder({ jobs: await fileJobs("out/deck-jobs.json"), generate, useStub, stub, serviceId: c.serviceId });
 
 const job = await builder.run(jobId, idea);

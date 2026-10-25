@@ -142,3 +142,79 @@ The six uploaded files were already on disk verbatim and required no edits:
 | **Total vitest** | **36** | **✅ all pass** |
 | `bun run check` (oxlint + tsc) | — | ✅ 0 errors |
 | `tsc -p tsconfig.node.json` | — | ✅ 0 errors |
+
+---
+
+## Turn 6 — Vercel build errors + Gemini model config
+
+### The build errors (8 of them) were one root cause
+
+Root `tsconfig.json` was `{ "files": [], "references": [] }` — **no `compilerOptions` at all**.
+`npm run typecheck` passed because it uses `tsconfig.app.json` / `tsconfig.api.json` / `tsconfig.node.json`,
+but Vercel's `@vercel/node` builder type-checks every `api/*.ts` entrypoint against the **root**
+`tsconfig.json`. With no options it fell back to non-strict + `target: ES5`, which caused:
+
+| Reported error | Why |
+|---|---|
+| `pitchBrief.ts` TS1360 / TS2322 — `title` optional in `PitchBrief` | zod infers every field as optional when `strictNullChecks` is off |
+| `runtime.ts`, `api/feed.ts`, `api/quote.ts` — `account: { address: undefined }` not assignable to `undefined` | viem's `PublicClient` account type collapses without `strictNullChecks` |
+| `Property 'chain' is missing`, `Property 'authorizationList' is missing` (`api/services.ts`, `api/purchase/[id].ts`, `callCore.ts`) | same — viem's optional-undefined params become required |
+| `api/health.ts` TS2802 `--downlevelIteration` | default `target: ES5` (not in the pasted log, found locally) |
+
+**Fix**: root `tsconfig.json` now carries the same `compilerOptions` as `tsconfig.api.json`
+(`target: ES2022`, `strict: true`, `moduleResolution: bundler`, `types: ["node"]`), with `files: []` kept
+so it still compiles nothing itself. Keep these two files in sync.
+
+### Gemini: the key is valid, the model was wrong
+
+`GEMINI_API_KEY` (`AQ.…`, 53 chars — the newer non-`AIza` key format) authenticates fine. The problems were:
+
+1. **`GEMINI_MODEL=gemini-3.8-flash` is far too slow here** — 200 OK but **~290 s** for one brief on the
+   free tier (queueing; `thinkingLevel: "low"` does not bound it). The generator budget is 45 s and
+   `api/call.ts` has `maxDuration: 60`, so every real call would have returned `gemini_timeout`.
+2. **Its free-tier cap is 20 requests/day/model** and it was exhausted (429 `RESOURCE_EXHAUSTED`).
+3. **The fallback was not a fallback** — `GEMINI_FALLBACK_MODEL` defaulted to `gemini-flash-latest`,
+   which *resolves to* `gemini-3.8-flash`, i.e. the same model and the same per-model daily quota.
+4. **`gemini-2.5-flash` is dead** — 404 "no longer available to new users". It was still the default in
+   `examples/_env.ts` and `apps/deck-builder/cli.ts`.
+
+Measured with the real pitch-brief payload (schema + `thinkingConfig`):
+
+| Model | Result |
+|---|---|
+| `gemini-3.8-flash` | 200 but ~290 s / 429 after 20/day |
+| `gemini-3.5-flash-lite` | **200 in 2–3 s, consistently** ✅ |
+| `gemini-3.6-flash` | 200 in 7–13 s, intermittent 503 |
+| `gemini-3.1-flash-lite` | 200 in 4–48 s, frequent 503 |
+| `gemini-2.5-flash` | 404 retired |
+
+### Changes
+
+- `.env`, `lib/server/env.ts`, `api/health.ts` — `GEMINI_MODEL=gemini-3.5-flash-lite`,
+  `GEMINI_FALLBACK_MODEL=gemini-3.6-flash`. Both **pinned, never a `*-latest` alias** (an alias is how
+  this drifted onto 3.8-flash) and deliberately two different models (the daily cap is per model).
+- `lib/server/pitchBrief.ts` — one 700 ms retry on `503 UNAVAILABLE` before moving to the next model;
+  without it the fallback died on transient overload. `geminiPing` timeout 12 s → 20 s so a briefly
+  overloaded but working model is not reported as `TIMEOUT`.
+- `examples/_env.ts`, `apps/deck-builder/cli.ts` — dead `gemini-2.5-flash` default → `gemini-3.5-flash-lite`.
+
+### Vercel env vars to update
+
+`.env` is gitignored, so the dashboard needs this by hand: set `GEMINI_MODEL=gemini-3.5-flash-lite` and
+`GEMINI_FALLBACK_MODEL=gemini-3.6-flash`, **or simply delete `GEMINI_MODEL`** — the code defaults now match.
+Verify after deploy with `GET /api/health?check=gemini`.
+
+Free tier is 20 requests/day **per model** (so ~40 briefs/day across the pair). Enable billing on the
+Google Cloud project behind the key to lift it.
+
+### Test results (Turn 6)
+
+| Suite | Result |
+|---|---|
+| `tsc` with root `tsconfig.json` over `api` + `lib/server` + `shared` (Vercel-equivalent) | ✅ 0 errors (was 8) |
+| `npm run typecheck` (all three projects) | ✅ 0 errors |
+| `npm run build` (typecheck + vite build) | ✅ built |
+| `npm run test:e2e` (vitest) | ✅ 36/36 |
+| `geminiGenerator` end-to-end, real key | ✅ 3/3, 2.4–4.1 s, schema valid, 5 slides |
+| fallback path (bogus primary → `gemini-3.6-flash`) | ✅ 2/2, 8.8–10.8 s |
+| `geminiPing` on both models | ✅ both 200 |

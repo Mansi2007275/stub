@@ -51,7 +51,7 @@ const need = (k: string) => {
 
 export async function setup(): Promise<Ctx> {
   if (isLocal) {
-    const generate = process.env.GEMINI_API_KEY ? geminiGenerator(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL ?? "gemini-2.5-flash") : mockGenerate;
+    const generate = process.env.GEMINI_API_KEY ? geminiGenerator(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite") : mockGenerate;
     const stack = await startLocalStack({ generate });
     const map: Record<string, Who> = { buyer: "buyer", agent: "agent", owner: "buyer", deckApp: "deckApp" };
     return {

@@ -86,8 +86,17 @@ export function geminiGenerator(apiKey: string, models: string | string[], timeo
           headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
           body: request(model, idea, thinking),
         });
-      let res = await post(true);
-      if (res.status === 400) res = await post(false); // model doesn't accept thinkingConfig
+      const send = async () => {
+        const r = await post(true);
+        return r.status === 400 ? await post(false) : r; // model doesn't accept thinkingConfig
+      };
+      let res = await send();
+      // 503 UNAVAILABLE means "this model is overloaded right now", not that the request is wrong.
+      // It is common enough on the free tier that one short retry is worth it before moving on.
+      if (res.status === 503) {
+        await new Promise((r) => setTimeout(r, 700));
+        res = await send();
+      }
       if (!res.ok) throw new ProviderError(`gemini_http_${res.status}`);
       const body = (await res.json()) as {
         candidates?: { finishReason?: string; content?: { parts?: { text?: string; thought?: boolean }[] } }[];
@@ -135,7 +144,10 @@ export function geminiGenerator(apiKey: string, models: string | string[], timeo
 }
 
 /** Tiny request used by /api/health?check=gemini to see what Vercel gets back from Google. No secrets returned. */
-export async function geminiPing(apiKey: string, model: string, timeoutMs = 12_000) {
+// 20s, not 12s: a flash model that is briefly overloaded still answers, and reporting a
+// usable model as TIMEOUT is worse than waiting. /api/health has maxDuration 30 and probes
+// both models in parallel.
+export async function geminiPing(apiKey: string, model: string, timeoutMs = 20_000) {
   const started = Date.now();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);

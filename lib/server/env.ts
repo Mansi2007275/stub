@@ -15,8 +15,11 @@ const PublicEnv = z.object({
 const SecretEnv = z.object({
   FULFILLER_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 0x-prefixed 32-byte hex key"),
   GEMINI_API_KEY: z.string().min(10),
-  GEMINI_MODEL: z.string().default("gemini-flash-latest"),
-  GEMINI_FALLBACK_MODEL: z.string().default("gemini-flash-latest"),
+  // Pinned, not *-latest: an alias can migrate to a model that is slower than the request
+  // budget (gemini-3.8-flash took ~290s for one brief on the free tier). The two must differ,
+  // because the free-tier daily request cap is per model.
+  GEMINI_MODEL: z.string().default("gemini-3.5-flash-lite"),
+  GEMINI_FALLBACK_MODEL: z.string().default("gemini-3.6-flash"),
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(10),
 });

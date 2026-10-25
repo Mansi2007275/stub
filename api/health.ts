@@ -29,7 +29,7 @@ export default handler(["GET"], async (req, res) => {
     if (url && token && (await upstashStore(url, token).incr(keys.rate("health-gemini"), 60)) > 6) {
       return res.status(429).json({ ...out, gemini: { error: "rate_limited, try again in a minute" } });
     }
-    const models = [...new Set([process.env.GEMINI_MODEL || "gemini-flash-latest", process.env.GEMINI_FALLBACK_MODEL || "gemini-flash-latest"])];
+    const models = [...new Set([process.env.GEMINI_MODEL || "gemini-3.5-flash-lite", process.env.GEMINI_FALLBACK_MODEL || "gemini-3.6-flash"])];
     out.gemini = { keyLooksLike: key.startsWith("AIza") ? "AIza… (standard key)" : `${key.slice(0, 3)}… (${key.length} chars)`, results: await Promise.all(models.map((m) => geminiPing(key, m))) };
   }
 
