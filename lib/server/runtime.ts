@@ -22,7 +22,7 @@ export function productionDeps(): Deps {
     escrow,
     serviceId: BigInt(process.env.VITE_SERVICE_ID || "1"),
     store: upstashStore(s.UPSTASH_REDIS_REST_URL, s.UPSTASH_REDIS_REST_TOKEN),
-    generate: geminiGenerator(s.GEMINI_API_KEY, s.GEMINI_MODEL),
+    generate: geminiGenerator(s.GEMINI_API_KEY, [s.GEMINI_MODEL, s.GEMINI_FALLBACK_MODEL]),
   };
 }
 

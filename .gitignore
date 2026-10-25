@@ -19,3 +19,5 @@ dist/
 /lib/openzeppelin-contracts/
 /lib/forge-std/
 .arc-studio/
+
+.vite/

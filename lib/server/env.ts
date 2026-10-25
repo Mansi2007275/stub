@@ -15,7 +15,8 @@ const PublicEnv = z.object({
 const SecretEnv = z.object({
   FULFILLER_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 0x-prefixed 32-byte hex key"),
   GEMINI_API_KEY: z.string().min(10),
-  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.string().default("gemini-flash-latest"),
+  GEMINI_FALLBACK_MODEL: z.string().default("gemini-flash-latest"),
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(10),
 });

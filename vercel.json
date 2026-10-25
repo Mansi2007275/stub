@@ -29,6 +29,9 @@
   "functions": {
     "api/call.ts": {
       "maxDuration": 60
+    },
+    "api/health.ts": {
+      "maxDuration": 30
     }
   }
 }
