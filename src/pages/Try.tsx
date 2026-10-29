@@ -1,16 +1,21 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
-import type { Hex } from "viem";
-import { chain, isDeployed } from "../lib/config";
-import { ERRORS, loadPending, payAndCall, type Step } from "../lib/payCall";
+import { useAccount, usePublicClient, useReadContract, useWalletClient } from "wagmi";
+import { formatUnits, type Hex } from "viem";
+import { ESCROW_ADDRESS, SERVICE_ID, USDC_DECIMALS, chain, isDeployed } from "../lib/config";
+import { escrowAbi } from "../lib/escrowAbi";
+import { ERRORS, humanError, loadPending, payAndCall, type Step } from "../lib/payCall";
+import { useFeeBps } from "../lib/useChainFacts";
 import { Hex as HexText } from "../components/Hex";
 import { EscrowTicket, type TicketPhase } from "../components/EscrowTicket";
 import { canonicalJson, hashInput, type PitchBrief } from "../../shared/protocol";
 
-const STEPS: { key: Step; title: string; hint: string }[] = [
+// Every step the flow can fail on has a row, "quote" included: without it, a failure in the quote
+// or allowance read showed its error next to "Approve USDC" and looked like an Approve failure.
+const STEPS = (price: string): { key: Step; title: string; hint: string }[] => [
+  { key: "quote", title: "Get a quote", hint: "Purchase ID and current price from the gateway" },
   { key: "approve", title: "Approve USDC", hint: "Allowance for exactly one call" },
-  { key: "lock", title: "Lock payment", hint: "0.05 USDC held against your purchase ID" },
+  { key: "lock", title: "Lock payment", hint: `${price} USDC held against your purchase ID` },
   { key: "sign", title: "Sign the request", hint: "Proves you're the payer. No gas." },
   { key: "generate", title: "Generate", hint: "The gateway writes your pitch brief" },
   { key: "done", title: "Released", hint: "Result hash posted, seller paid" },
@@ -22,6 +27,12 @@ export function Try() {
   const { data: wallet } = useWalletClient({ chainId: chain.id });
   const client = usePublicClient({ chainId: chain.id });
   const pending = loadPending();
+
+  // The price is whatever the seller set on-chain; never a constant in the frontend.
+  const service = useReadContract({ address: ESCROW_ADDRESS, abi: escrowAbi, functionName: "services", args: [SERVICE_ID], chainId: chain.id, query: { enabled: isDeployed } });
+  const price = service.data?.[2];
+  const { feeBps } = useFeeBps();
+  const priceLabel = price === undefined ? "…" : formatUnits(price, USDC_DECIMALS);
 
   const [idea, setIdea] = useState(pending?.input ?? "");
   const [step, setStep] = useState<Step | null>(null);
@@ -66,8 +77,7 @@ export function Try() {
         setError(`${ERRORS[out.error] ?? `Call failed: ${out.error}`}${why}`);
       }
     } catch (e) {
-      const msg = (e as { shortMessage?: string; message?: string }).shortMessage ?? (e as Error).message;
-      setError(/rejected|denied/i.test(msg) ? "You cancelled in your wallet. Nothing was charged unless the lock step finished." : msg);
+      setError(humanError(e));
     } finally {
       setBusy(false);
     }
@@ -89,8 +99,8 @@ export function Try() {
   return (
     <div className="wrap">
       <div className="page-head">
-        <h1>Try a paid call</h1>
-        <p>Describe a startup idea. You pay 0.05 USDC into escrow and get a structured pitch brief back. No result, no charge.</p>
+        <h1>Try a <span className="hl">paid call</span></h1>
+        <p>Describe a startup idea. You pay {priceLabel} USDC into escrow and get a structured pitch brief back. No result, no charge.</p>
       </div>
 
       {!isDeployed && (
@@ -125,16 +135,16 @@ export function Try() {
             <span className="hint">{idea.length}/4000. At least 20 characters.</span>
           </div>
           <button className="btn" disabled={!ready} style={{ width: "100%" }} onClick={() => void run()}>
-            {busy ? "Working" : resumable ? "Resume my paid call" : "Pay 0.05 USDC and run"}
+            {busy ? "Working" : resumable ? "Resume my paid call" : `Pay ${priceLabel} USDC and run`}
           </button>
           {error && (
-            <p role="alert" style={{ color: "var(--refund)", fontSize: "var(--t-sm)", marginTop: 14 }}>
+            <p role="alert" className="form-error">
               {error}
             </p>
           )}
         </div>
 
-        <div className="panel ticket-panel">
+        <div className="panel pb-blue ticket-panel">
           <h2>Your ticket</h2>
           <div className={`try-ticket ${phase === "draft" ? "is-draft" : ""}`}>
             <EscrowTicket
@@ -142,17 +152,18 @@ export function Try() {
               data={{
                 purchaseId,
                 payer: address,
+                amount: price,
+                feeBps,
                 inputHash: phase === "draft" || phase === "printing" ? undefined : hashInput(idea),
                 resultHash,
               }}
             />
           </div>
           <ol className="steps compact-steps">
-            {STEPS.map((s) => (
-              <li key={s.key} style={{ opacity: reached(s.key) || step === null ? 1 : 0.5 }}>
-                <strong style={{ color: step === s.key && busy ? "var(--usdc)" : reached(s.key) ? "var(--released)" : undefined }}>
-                  {s.title}
-                </strong>
+            {STEPS(priceLabel).map((s) => (
+              <li key={s.key} className={error && step === s.key ? "failed" : busy && step === s.key ? "doing" : reached(s.key) ? "done" : "todo"}>
+                <span className="check" aria-hidden="true" />
+                <strong>{s.title}</strong>
                 <span>{txs[s.key] ? <HexText value={txs[s.key]} kind="tx" /> : s.hint}</span>
               </li>
             ))}
@@ -166,13 +177,13 @@ export function Try() {
           )}
         </div>
 
-        <div className="panel">
+        <div className="panel pb-mint">
           <h2>Pitch brief</h2>
           {!brief ? (
             <div className="empty">{busy ? "Waiting for delivery" : "Your brief and receipt appear here after the call settles."}</div>
           ) : (
             <article className="brief">
-              <h3 style={{ fontFamily: "var(--f-display)", fontSize: "var(--t-xl)", margin: "0 0 4px", letterSpacing: "-0.02em" }}>{brief.title}</h3>
+              <h3>{brief.title}</h3>
               <p className="muted" style={{ marginTop: 0 }}>{brief.oneLiner}</p>
               <dl className="kv" style={{ fontFamily: "var(--f-body)" }}>
                 {(

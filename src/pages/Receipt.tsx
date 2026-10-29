@@ -109,7 +109,7 @@ export function Receipt() {
   return (
     <div className="wrap" style={{ paddingBottom: 72 }}>
       <div className="page-head">
-        <h1>Receipt</h1>
+        <h1><span className="hl">Receipt</span></h1>
         <p>Read live from the escrow contract on {chain.name}. Anyone with this link can check it.</p>
       </div>
 
@@ -195,7 +195,7 @@ export function Receipt() {
             {canRefund && !refunded && (
               <div style={{ marginTop: 20 }}>
                 <button
-                  className="btn"
+                  className="btn danger"
                   disabled={isPending}
                   onClick={() => writeContract({ address: ESCROW_ADDRESS!, abi: escrowAbi, functionName: "refund", args: [id as Hex], chainId: chain.id })}
                 >
@@ -204,7 +204,7 @@ export function Receipt() {
                 <p className="muted" style={{ fontSize: "var(--t-sm)" }}>
                   The delivery deadline passed without a result, so you can take the full amount back.
                 </p>
-                {refundError && <p style={{ color: "var(--refund)", fontSize: "var(--t-sm)" }}>{refundError.message.split("\n")[0]}</p>}
+                {refundError && <p className="form-error">{refundError.message.split("\n")[0]}</p>}
               </div>
             )}
             {refunded && (
