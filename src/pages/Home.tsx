@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useReadContract } from "wagmi";
-import { Ticket } from "../components/Ticket";
 import { EscrowTicket } from "../components/EscrowTicket";
 import { Hex } from "../components/Hex";
 import { escrowAbi } from "../lib/escrowAbi";
 import { ESCROW_ADDRESS, NETWORK, USDC_ADDRESS, chain, isDeployed } from "../lib/config";
 import { usdc } from "../lib/format";
 import { useFeed } from "../lib/useFeed";
+import { useFeeBps, useServicePrice } from "../lib/useChainFacts";
 import { phaseOf, ticketOf } from "../lib/feedView";
 
 const GUARANTEES = [
@@ -21,14 +21,15 @@ const GUARANTEES = [
 
 function Check() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="9" fill="none" stroke="var(--released)" strokeWidth="1.6" />
-      <path d="M6 10.4l2.6 2.6L14 7.6" fill="none" stroke="var(--released)" strokeWidth="1.8" strokeLinecap="round" />
+    <svg width="24" height="24" viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="10" cy="10" r="8.6" fill="var(--mint)" stroke="var(--ink)" strokeWidth="2" />
+      <path d="M6 10.4l2.6 2.6L14 7.6" fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function LiveWall({ doc, source }: ReturnType<typeof useFeed>) {
+  const { feeBps } = useFeeBps();
   const { data: locked } = useReadContract({ address: ESCROW_ADDRESS, abi: escrowAbi, functionName: "totalLocked", chainId: chain.id, query: { enabled: isDeployed, refetchInterval: 8_000 } });
   const seen = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
@@ -50,7 +51,7 @@ function LiveWall({ doc, source }: ReturnType<typeof useFeed>) {
     <section className="block" aria-labelledby="live">
       <div className="wrap">
         <div className="live-head">
-          <h2 id="live">On Arc right now</h2>
+          <h2 id="live">On Arc <span className="hl mint">right now</span></h2>
           <span className={`live-dot ${doc ? "on" : ""}`}>{doc ? (source === "api" ? "Live from the escrow" : "Live, recent blocks") : isDeployed ? "Connecting to Arc" : "Escrow not deployed"}</span>
         </div>
         <dl className="stats">
@@ -84,7 +85,7 @@ function LiveWall({ doc, source }: ReturnType<typeof useFeed>) {
             {items.map((i, n) => (
               <li key={i.purchaseId} className={fresh.has(i.purchaseId) ? "printing" : ""}>
                 <Link to={`/receipt/${i.purchaseId}`} aria-label={`Receipt ${i.purchaseId}`}>
-                  <EscrowTicket compact phase={phaseOf(i)} data={ticketOf(i)} seed={(n % 4) + 1} />
+                  <EscrowTicket compact phase={phaseOf(i)} data={ticketOf(i, feeBps)} seed={(n % 4) + 1} />
                 </Link>
               </li>
             ))}
@@ -99,6 +100,9 @@ export function Home() {
   const feed = useFeed();
   const { doc } = feed;
   const latest = doc?.items.find((i) => i.status === "Released") ?? doc?.items[0];
+  // Every figure below comes from the contract, so none of it can drift from what buyers actually pay.
+  const { feeBps, sellerPct, feePct } = useFeeBps();
+  const price = useServicePrice();
 
   return (
     <>
@@ -106,12 +110,19 @@ export function Home() {
         <div className="wrap">
           <div>
             <h1>
-              Charge per API call.
-              <span className="line2">Get paid when the answer arrives.</span>
+              Charge per <span className="hl">API call</span>.
+              <span className="line2">
+                Get paid when the <span className="hl mint">answer arrives</span>.
+              </span>
             </h1>
             <p className="lede">
               Stub holds USDC in escrow on Arc for every request. The seller is paid when the result is delivered. If it never comes, the buyer takes the money back.
             </p>
+            <ul className="chips">
+              <li className="chip mint">No result, no charge</li>
+              <li className="chip blue">{sellerPct ? `Seller paid ${sellerPct} on delivery` : "Seller paid on delivery"}</li>
+              <li className="chip lilac">Receipt anyone can verify</li>
+            </ul>
             <div className="actions">
               <Link className="btn" to="/try">
                 Try a paid call
@@ -121,7 +132,24 @@ export function Home() {
               </Link>
             </div>
           </div>
-          {latest ? <Ticket data={ticketOf(latest)} phase={phaseOf(latest)} /> : <Ticket />}
+          {latest ? (
+            <div className="ticket-stage">
+              <EscrowTicket data={ticketOf(latest, feeBps)} phase={phaseOf(latest)} />
+              <div className="ticket-caption" aria-live="polite">
+                <span>Latest purchase on Arc</span>
+              </div>
+            </div>
+          ) : (
+            <div className="ticket-stage">
+              <div className="panel empty-hero">
+                <strong>No calls yet</strong>
+                <p className="muted">The first paid call on this contract will appear here.</p>
+                <Link className="btn" to="/try">
+                  Make the first one
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -129,7 +157,7 @@ export function Home() {
 
       <section className="block" aria-labelledby="settle">
         <div className="wrap">
-          <h2 id="settle">How a call settles</h2>
+          <h2 id="settle">How a call <span className="hl blue">settles</span></h2>
           <p className="intro">Three steps, all on Arc. Arc finalises in under a second, so the whole thing feels like a normal API call.</p>
           <div className="ledger">
             <div className="ledger-step">
@@ -146,7 +174,7 @@ export function Home() {
               <div className="outcome release">
                 <span className="idx">Step 3, delivered</span>
                 <h3>Release</h3>
-                <p>97% goes to the seller and 3% to the protocol, in the same transaction.</p>
+                <p>{sellerPct && feePct ? `${sellerPct} to the seller and ${feePct} to the protocol` : "The seller share and the protocol fee are paid"}, in the same transaction.</p>
                 <div className="split-bar" aria-hidden="true">
                   <i />
                   <i />
@@ -165,7 +193,7 @@ export function Home() {
       <section className="block" aria-labelledby="agents">
         <div className="wrap two-col">
           <div>
-            <h2 id="agents">Give your agent a budget, not your wallet</h2>
+            <h2 id="agents">Give your agent a <span className="hl">budget</span>, not your wallet</h2>
             <p className="intro" style={{ marginBottom: 24 }}>
               Set how much an agent may spend per call and per day. It buys services on its own, can't go past the limit, and every refund comes back to you.
             </p>
@@ -176,7 +204,7 @@ export function Home() {
           <figure className="ration" aria-label="How an agent's daily budget is punched">
             <div className="ration-head">
               <strong>Daily allowance</strong>
-              <span>0.05 per call · 0.25 per day</span>
+              <span>{price === undefined ? "You choose the limits" : `from ${usdc(price)} USDC per call`}</span>
             </div>
             <div className="punches" aria-hidden="true">
               {[1, 1, 1, 0, 0].map((used, i) => (
@@ -190,7 +218,7 @@ export function Home() {
 
       <section className="block" aria-labelledby="build">
         <div className="wrap">
-          <h2 id="build">Build on Stub</h2>
+          <h2 id="build">Build on <span className="hl lilac">Stub</span></h2>
           <p className="intro">Buy from any script or agent. Sell any function. Same escrow, same guarantees.</p>
           <div className="code-pair">
             <div className="code-card">
@@ -225,7 +253,7 @@ export const POST = paywall.fetch;`}</code>
 
       <section className="block" aria-labelledby="rules">
         <div className="wrap">
-          <h2 id="rules">Enforced by the contract, not by trust</h2>
+          <h2 id="rules">Enforced by the <span className="hl">contract</span>, not by trust</h2>
           <div className="guarantees">
             {GUARANTEES.map(([t, d]) => (
               <div className="guarantee" key={t}>
