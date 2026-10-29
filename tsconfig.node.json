@@ -18,9 +18,12 @@
   "include": [
     "packages",
     "apps",
-    "examples",
+    "scripts",
     "lib",
     "tests",
     "shared"
+  ],
+  "exclude": [
+    "scripts/browser-e2e.ts"
   ]
 }

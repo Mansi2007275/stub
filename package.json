@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:full": "tsx scripts/dev-server.ts",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test:contracts": "forge test",
@@ -13,12 +14,6 @@
     "setup:contracts": "rm -rf lib/openzeppelin-contracts lib/forge-std && git clone --depth 1 --branch v5.1.0 https://github.com/OpenZeppelin/openzeppelin-contracts.git lib/openzeppelin-contracts && git clone --depth 1 https://github.com/foundry-rs/forge-std.git lib/forge-std",
     "test:e2e": "forge build && vitest run tests",
     "test": "forge test && forge build && vitest run tests",
-    "demo:a": "tsx examples/standalone-buyer.ts",
-    "demo:c": "tsx examples/failure-safety.ts",
-    "demo:agent": "tsx examples/agent-buyer.ts",
-    "demo:deck": "tsx apps/deck-builder/cli.ts",
-    "demo:local": "forge build && tsx examples/standalone-buyer.ts --local && tsx examples/agent-buyer.ts --local && tsx examples/failure-safety.ts --local && tsx apps/deck-builder/cli.ts --local && tsx examples/paywall-server.ts --local",
-    "demo:paywall": "tsx examples/paywall-server.ts",
     "test:browser": "tsx scripts/browser-e2e.ts"
   },
   "dependencies": {
