@@ -7,10 +7,12 @@ import { StubClient, StubError, localStoragePending } from "../../packages/sdk/s
 import { createDeckBuilder, memoryJobs, renderDeckHtml, templateDeck, type Job } from "../../apps/deck-builder/src/deck";
 import { Hex } from "../components/Hex";
 import { ERRORS } from "../lib/payCall";
+import { useServicePrice } from "../lib/useChainFacts";
+import { usdc } from "../lib/format";
 
 /**
  * Deck Builder, running in the browser. It is a *consumer* of Stub: it buys a pitch brief through
- * @stub/sdk (your wallet pays 0.05 USDC into escrow), then builds the slides from that brief.
+ * @stub/sdk (your wallet pays the seller's listed price into escrow), then builds the slides from it.
  */
 export function Deck() {
   const { isConnected, chainId } = useAccount();
@@ -21,6 +23,9 @@ export function Deck() {
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
+  // The price is read from the escrow, never stated as a constant.
+  const price = useServicePrice();
+  const priceLabel = price === undefined ? "the listed price" : `${usdc(price)} USDC`;
   const jobs = useMemo(() => memoryJobs(), []);
 
   const onChain = chainId === chain.id;
@@ -67,14 +72,14 @@ export function Deck() {
     <div className="wrap">
       <div className="page-head">
         <span className="app-chip">An app built on Stub</span>
-        <h1>Deck Builder</h1>
+        <h1>Deck <span className="hl">Builder</span></h1>
         <p>
-          Deck Builder doesn't write analysis itself. It buys a pitch brief from Stub for 0.05 USDC, then turns it into slides. If the brief never arrives, the escrow refunds you and no deck is made.
+          Deck Builder doesn't write analysis itself. It buys a pitch brief from Stub for {priceLabel}, then turns it into slides. If the brief never arrives, the escrow refunds you and no deck is made.
         </p>
       </div>
 
       <div className="grid-deck">
-        <div className="panel">
+        <div className="panel pb-yellow">
           <h2>Your idea</h2>
           <div className="field">
             <label htmlFor="deck-idea">What are you pitching?</label>
@@ -87,7 +92,7 @@ export function Deck() {
           </label>
           <p className="hint">Off: the deck is built from your idea alone, nothing is paid. This is the app's feature flag.</p>
           <button className="btn" style={{ width: "100%", marginTop: 12 }} disabled={!ready} onClick={() => void build()}>
-            {busy ? stage : useStub ? "Pay 0.05 USDC and build deck" : "Build deck without Stub"}
+            {busy ? stage : useStub ? `Pay ${priceLabel} and build deck` : "Build deck without Stub"}
           </button>
           {useStub && isConnected && !onChain && <p className="form-error">Switch your wallet to {chain.name}.</p>}
           {job?.status === "failed" && <p className="form-error">{ERRORS[job.error ?? ""] ?? `Couldn't build the deck: ${job.error}`}</p>}
