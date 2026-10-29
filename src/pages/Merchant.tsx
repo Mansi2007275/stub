@@ -3,10 +3,11 @@ import { Link } from "react-router-dom";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { isAddress, keccak256, parseUnits, stringToBytes, type Address } from "viem";
 import { escrowAbi } from "../lib/escrowAbi";
-import { ESCROW_ADDRESS, USDC_DECIMALS, chain, isDeployed } from "../lib/config";
+import { ESCROW_ADDRESS, MAX_PER_CALL, MIN_USDC, USDC_DECIMALS, chain, isDeployed } from "../lib/config";
 import { usdc } from "../lib/format";
 import { Hex } from "../components/Hex";
 import { useFeed } from "../lib/useFeed";
+import { useFeeBps } from "../lib/useChainFacts";
 
 type Service = { id: bigint; fulfiller: Address; price: bigint; timeout: number; active: boolean };
 
@@ -40,13 +41,14 @@ function useMyServices(merchant?: Address, reloadKey = 0) {
 export function Merchant() {
   const { address, isConnected } = useAccount();
   const disabled = !isDeployed || !isConnected;
-  const [price, setPrice] = useState("0.05");
+  const [price, setPrice] = useState("");
   const [timeout, setTimeoutS] = useState("600");
   const [fulfiller, setFulfiller] = useState("");
   const reg = useWriteContract();
   const done = useWaitForTransactionReceipt({ hash: reg.data, chainId: chain.id });
   const services = useMyServices(address, done.isSuccess ? 1 : 0);
   const { doc } = useFeed();
+  const { sellerPct } = useFeeBps();
 
   const mine = useMemo(() => new Set((services ?? []).map((s) => s.id.toString())), [services]);
   const rows = useMemo(() => (doc?.items ?? []).filter((i) => mine.has(i.serviceId)), [doc, mine]);
@@ -56,12 +58,15 @@ export function Merchant() {
 
   const t = Number(timeout);
   const hint = !fulfiller ? "" : !isAddress(fulfiller) ? "That isn't an address." : fulfiller.toLowerCase() === address?.toLowerCase() ? "Use a separate gateway wallet, not this one." : "";
-  const valid = isAddress(fulfiller) && fulfiller.toLowerCase() !== address?.toLowerCase() && Number(price) > 0 && t >= 60 && t <= 604800;
+  // MIN_TIMEOUT/MAX_TIMEOUT mirror the contract; the price has no ceiling there (uint96), so the
+  // only floor is what USDC can express at 6 decimals.
+  const priceOverMax = MAX_PER_CALL !== undefined && Number(price) > MAX_PER_CALL;
+  const valid = isAddress(fulfiller) && fulfiller.toLowerCase() !== address?.toLowerCase() && Number(price) >= MIN_USDC && !priceOverMax && t >= 60 && t <= 604800;
 
   return (
     <div className="wrap">
       <div className="page-head">
-        <h1>Sell an API</h1>
+        <h1>Sell an <span className="hl">API</span></h1>
         <p>
           List a service, set a price per call, and get paid in USDC each time your gateway delivers a result. Running your own API? Wrap it with{" "}
           <span className="mono">stubPaywall()</span> from <span className="mono">packages/paywall</span>.
@@ -76,7 +81,7 @@ export function Merchant() {
 
       <div className="grid-2">
         <form
-          className="panel"
+          className="panel pb-yellow"
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid || !ESCROW_ADDRESS) return;
@@ -92,8 +97,8 @@ export function Merchant() {
           <h2>List a service</h2>
           <div className="field">
             <label htmlFor="price">Price per call</label>
-            <input id="price" inputMode="decimal" disabled={disabled} value={price} onChange={(e) => setPrice(e.target.value)} />
-            <span className="hint">In USDC. You receive 97%.</span>
+            <input id="price" inputMode="decimal" placeholder="0.000000" disabled={disabled} value={price} onChange={(e) => setPrice(e.target.value)} />
+            <span className="hint">{sellerPct ? `In USDC. You receive ${sellerPct}.` : "In USDC, 6 decimals."}</span>
           </div>
           <div className="field">
             <label htmlFor="timeout">Time to deliver</label>
@@ -116,7 +121,8 @@ export function Merchant() {
           {reg.error && <p className="form-error">{reg.error.message.split("\n")[0]}</p>}
         </form>
 
-        <div className="panel">
+        <div className="stack">
+        <div className="panel pb-lilac">
           <h2>Your services</h2>
           {!address ? (
             <div className="empty">Connect your wallet to see what you sell.</div>
@@ -138,7 +144,10 @@ export function Merchant() {
             </ul>
           )}
 
-          <h2 style={{ marginTop: 28 }}>Earnings</h2>
+        </div>
+
+        <div className="panel pb-mint">
+          <h2>Earnings</h2>
           <dl className="stats mini">
             <div>
               <dt>Earned</dt>
@@ -171,6 +180,7 @@ export function Merchant() {
               ))}
             </ul>
           )}
+        </div>
         </div>
       </div>
     </div>

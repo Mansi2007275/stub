@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { erc20Abi, isAddress, parseUnits, type Address } from "viem";
 import { escrowAbi } from "../lib/escrowAbi";
-import { ESCROW_ADDRESS, EXPLORER, IDENTITY_REGISTRY, USDC_DECIMALS, USDC_ADDRESS, chain, isDeployed } from "../lib/config";
+import { ESCROW_ADDRESS, EXPLORER, IDENTITY_REGISTRY, MAX_PER_CALL, MIN_USDC, USDC_DECIMALS, USDC_ADDRESS, chain, isDeployed } from "../lib/config";
 import { usdc } from "../lib/format";
 import { Hex } from "../components/Hex";
 
@@ -67,7 +67,7 @@ function AgentRow({ owner, agent }: { owner: Address; agent: Address }) {
         <IdentityBadge agent={agent} />
         {active && (
           <button
-            className="btn small ghost"
+            className={`btn small ${revoke.isPending ? "" : "danger"}`}
             disabled={revoke.isPending}
             onClick={() => ESCROW_ADDRESS && revoke.writeContract({ address: ESCROW_ADDRESS, abi: escrowAbi, functionName: "setAgentBudget", args: [agent, maxPerCall, dailyCap, false], chainId: chain.id })}
           >
@@ -84,8 +84,8 @@ export function Agents() {
   const { address, isConnected } = useAccount();
   const disabled = !isDeployed || !isConnected;
   const [agent, setAgent] = useState("");
-  const [per, setPer] = useState("0.05");
-  const [cap, setCap] = useState("0.25");
+  const [per, setPer] = useState("");
+  const [cap, setCap] = useState("");
   const [tracked, setTracked] = useState<Address[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("stub:agents") ?? "[]") as Address[];
@@ -112,8 +112,11 @@ export function Agents() {
 
   const perN = Number(per);
   const capN = Number(cap);
-  const valid = isAddress(agent) && agent.toLowerCase() !== address?.toLowerCase() && perN > 0 && capN >= perN;
-  const hint = !agent ? "" : !isAddress(agent) ? "That isn't an address." : agent.toLowerCase() === address?.toLowerCase() ? "Use a separate wallet for the agent." : capN < perN ? "The daily limit must be at least the per-call limit." : "";
+  // Only the contract's own rule (daily cap >= per-call) plus USDC's 6-decimal floor. The daily cap
+  // itself is whatever the owner types; MAX_PER_CALL is advisory and unset unless configured.
+  const overMax = MAX_PER_CALL !== undefined && (perN > MAX_PER_CALL || capN > MAX_PER_CALL);
+  const valid = isAddress(agent) && agent.toLowerCase() !== address?.toLowerCase() && perN >= MIN_USDC && capN >= perN && !overMax;
+  const hint = !agent ? "" : !isAddress(agent) ? "That isn't an address." : agent.toLowerCase() === address?.toLowerCase() ? "Use a separate wallet for the agent." : capN < perN ? "The daily limit must be at least the per-call limit." : overMax ? `This deployment caps amounts at ${MAX_PER_CALL} USDC.` : perN > 0 && perN < MIN_USDC ? "The smallest amount USDC can express is 0.000001." : "";
   const err = budget.error ?? approve.error;
 
   const save = () => {
@@ -131,7 +134,7 @@ export function Agents() {
   return (
     <div className="wrap">
       <div className="page-head">
-        <h1>Agent budgets</h1>
+        <h1>Agent <span className="hl">budgets</span></h1>
         <p>Let an AI agent buy services with your USDC, inside limits the contract enforces. Refunds always come back to you, and you can revoke it any time.</p>
       </div>
 
@@ -142,7 +145,7 @@ export function Agents() {
       )}
 
       <div className="grid-2">
-        <form className="panel" onSubmit={(e) => (e.preventDefault(), save())}>
+        <form className="panel pb-yellow" onSubmit={(e) => (e.preventDefault(), save())}>
           <h2>New budget</h2>
           <div className="field">
             <label htmlFor="agent">Agent address</label>
@@ -151,13 +154,13 @@ export function Agents() {
           </div>
           <div className="field">
             <label htmlFor="per">Most it can spend on one call</label>
-            <input id="per" inputMode="decimal" disabled={disabled} value={per} onChange={(e) => setPer(e.target.value)} />
-            <span className="hint">In USDC</span>
+            <input id="per" inputMode="decimal" placeholder="0.000000" disabled={disabled} value={per} onChange={(e) => setPer(e.target.value)} />
+            <span className="hint">In USDC, 6 decimals. Any amount you choose.</span>
           </div>
           <div className="field">
             <label htmlFor="cap">Most it can spend per day</label>
-            <input id="cap" inputMode="decimal" disabled={disabled} value={cap} onChange={(e) => setCap(e.target.value)} />
-            <span className="hint">Resets at 00:00 UTC.</span>
+            <input id="cap" inputMode="decimal" placeholder="0.000000" disabled={disabled} value={cap} onChange={(e) => setCap(e.target.value)} />
+            <span className="hint">In USDC. Any amount, as long as it is at least the per-call limit. Resets at 00:00 UTC.</span>
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <button className="btn" disabled={disabled || !valid || budget.isPending}>
@@ -178,7 +181,7 @@ export function Agents() {
           {err && <p className="form-error">{err.message.split("\n")[0]}</p>}
         </form>
 
-        <div className="panel">
+        <div className="panel pb-lilac">
           <h2>Your agents</h2>
           {!address || tracked.length === 0 ? (
             <div className="empty">No budgets yet. Each agent you add gets a punch card showing today's spend.</div>

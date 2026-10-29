@@ -33,6 +33,27 @@ export const REFUNDED = parseAbiItem("event PurchaseRefunded(bytes32 indexed pur
 export const MAX_LOG_RANGE = 5_000n;
 export const MAX_ITEMS = 300;
 
+
+/** Arc throttles with JSON-RPC -32005 and HTTP 429; both are worth waiting out, nothing else is. */
+function throttled(e: unknown): boolean {
+  const err = e as { code?: number; status?: number; message?: string; details?: string; cause?: unknown };
+  if (err?.code === -32005 || err?.status === 429) return true;
+  if (/rate limit|exceeds defined limit|too many requests/i.test(`${err?.message ?? ""} ${err?.details ?? ""}`)) return true;
+  return err?.cause ? throttled(err.cause) : false;
+}
+
+/** One log query, retried with exponential backoff only while the endpoint is throttling. */
+async function getLogsRetrying<T>(fn: () => Promise<T>, tries = 5, baseMs = 500): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= tries - 1 || !throttled(e)) throw e;
+      await new Promise((r) => setTimeout(r, baseMs * 2 ** i));
+    }
+  }
+}
+
 export const emptyDoc = (fromBlock: bigint, chainId: number): FeedDoc => ({
   cursor: (fromBlock - 1n).toString(),
   items: [],
@@ -55,11 +76,10 @@ export async function advanceFeed(client: PublicClient, escrow: Address, doc: Fe
   for (let n = 0; n < maxChunks && cursor < head; n++) {
     const fromBlock = cursor + 1n;
     const toBlock = fromBlock + chunk - 1n > head ? head : fromBlock + chunk - 1n;
-    const [locked, fulfilled, refunded] = await Promise.all([
-      client.getLogs({ address: escrow, event: LOCKED, fromBlock, toBlock }),
-      client.getLogs({ address: escrow, event: FULFILLED, fromBlock, toBlock }),
-      client.getLogs({ address: escrow, event: REFUNDED, fromBlock, toBlock }),
-    ]);
+    // Sequential, not parallel: three concurrent getLogs per chunk is what tripped Arc's limiter.
+    const locked = await getLogsRetrying(() => client.getLogs({ address: escrow, event: LOCKED, fromBlock, toBlock }));
+    const fulfilled = await getLogsRetrying(() => client.getLogs({ address: escrow, event: FULFILLED, fromBlock, toBlock }));
+    const refunded = await getLogsRetrying(() => client.getLogs({ address: escrow, event: REFUNDED, fromBlock, toBlock }));
     for (const l of locked) {
       const a = l.args;
       byId.set(a.purchaseId!, {

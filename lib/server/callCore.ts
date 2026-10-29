@@ -33,6 +33,27 @@ const fail = (status: number, error: string, extra: Partial<Extract<CallResponse
 const STATUS = { None: 0, Locked: 1, Fulfilled: 2, Refunded: 3 } as const;
 
 /**
+ * Arc's RPCs index eth_getTransactionReceipt minutes after the block is produced, so viem's
+ * waitForTransactionReceipt times out on a fulfil that already succeeded - which turned a released
+ * escrow into a 500 for the buyer. The escrow's own status is authoritative and cheap, so it gets
+ * the last word, and the budget stays well inside the function's 60s limit.
+ */
+async function confirmFulfill(client: PublicClient, escrow: Address, purchaseId: Hex, hash: Hex, budgetMs = 25_000): Promise<boolean> {
+  const isFulfilled = async () =>
+    Number(await client.readContract({ address: escrow, abi: escrowAbi, functionName: "statusOf", args: [purchaseId] })) === STATUS.Fulfilled;
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return (await client.getTransactionReceipt({ hash })).status === "success";
+    } catch {
+      if (await isFulfilled()) return true; // released on-chain, the receipt just isn't indexed yet
+    }
+    if (Date.now() >= deadline) return await isFulfilled();
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}
+
+/**
  * The whole paid-call state machine. Order matters:
  * validate → read chain → authorize signer → return cached → lock → generate → store → fulfil.
  * A buyer is never asked to pay again: every retry with the same purchaseId converges on the same outcome.
@@ -106,8 +127,7 @@ export async function processCall(deps: Deps, raw: unknown): Promise<Out> {
       functionName: "fulfill",
       args: [purchaseId, resultHash],
     });
-    const receipt = await client.waitForTransactionReceipt({ hash: fulfillTx });
-    if (receipt.status !== "success") return fail(502, "fulfill_reverted");
+    if (!(await confirmFulfill(client, escrow, purchaseId, fulfillTx))) return fail(502, "fulfill_reverted");
 
     return { status: 200, body: { ok: true, purchaseId, result: JSON.parse(resultJson) as unknown, resultHash, fulfillTx, cached: false } };
   } finally {

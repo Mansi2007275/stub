@@ -20,29 +20,30 @@ const STAMP: Partial<Record<TicketPhase, string>> = { locked: "Locked", delivere
 
 /**
  * One escrow purchase drawn as a security-printed ticket. The stub on the right is what the seller
- * tears off when the call is released. Used with real on-chain data everywhere except the hero sample.
+ * tears off when the call is released. Always rendered from real on-chain data: anything the chain
+ * has not told us yet is shown as "-", never invented.
  */
 export function EscrowTicket({
   phase,
   data,
-  sample = false,
   compact = false,
   seed = 2,
 }: {
   phase: TicketPhase;
   data: TicketData;
-  sample?: boolean;
   compact?: boolean;
   seed?: number;
 }) {
-  const amount = data.amount ?? 50_000n;
-  const fee = data.feeAmount ?? (amount * BigInt(data.feeBps ?? 300)) / 10_000n;
-  const merchant = data.merchantAmount ?? amount - fee;
+  // Only derive a split when the chain has given us both an amount and a fee rate.
+  const amount = data.amount;
+  const fee = data.feeAmount ?? (amount !== undefined && data.feeBps !== undefined ? (amount * BigInt(data.feeBps)) / 10_000n : undefined);
+  const merchant = data.merchantAmount ?? (amount !== undefined && fee !== undefined ? amount - fee : undefined);
+  const money = (v?: bigint) => (v === undefined ? "-" : usdc(v));
   const delivered = phase === "delivered" || phase === "released";
   const deadline = data.deadline ? new Date(Number(data.deadline) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "10 min after lock";
 
   return (
-    <div className={`ticket ${compact ? "compact" : ""}`} data-phase={phase} aria-label={`${sample ? "Sample" : "Escrow"} ticket, ${STAMP[phase] ?? "not paid yet"}`}>
+    <div className={`ticket ${compact ? "compact" : ""}`} data-phase={phase} aria-label={`Escrow ticket, ${STAMP[phase] ?? "not paid yet"}`}>
       <div className="ticket-body">
         <Guilloche seed={seed} />
         <div className="ticket-content">
@@ -51,12 +52,11 @@ export function EscrowTicket({
               <div className="ticket-issuer">Stub escrow</div>
               <div className="ticket-serial">
                 No. {data.purchaseId ? shortHex(data.purchaseId, 6, 4) : "—"}
-                {sample && <span className="sample-tag">Sample</span>}
               </div>
             </div>
           </div>
           <div className="ticket-amount">
-            {usdc(amount)}
+            {money(amount)}
             <small>USDC</small>
           </div>
           <div className="ticket-for">for one call to {data.serviceName ?? "Pitch Brief Analyzer"}</div>
@@ -87,13 +87,13 @@ export function EscrowTicket({
         <Guilloche seed={seed + 2} rings={8} />
         <div className="ticket-content">
           <div className="stub-label">{phase === "refunded" ? "Returned to payer" : "Seller receives"}</div>
-          <div className="stub-value">{phase === "refunded" ? usdc(amount) : usdc(merchant)}</div>
-          <div className="stub-to">{phase === "refunded" ? "full amount" : "97% on delivery"}</div>
+          <div className="stub-value">{phase === "refunded" ? money(amount) : money(merchant)}</div>
+          <div className="stub-to">{phase === "refunded" ? "full amount" : data.feeBps === undefined ? "on delivery" : `${(10_000 - data.feeBps) / 100}% on delivery`}</div>
         </div>
         {phase !== "refunded" && (
           <div className="ticket-content">
             <div className="stub-label">Protocol</div>
-            <div className="stub-value small">{usdc(fee)}</div>
+            <div className="stub-value small">{money(fee)}</div>
           </div>
         )}
       </div>

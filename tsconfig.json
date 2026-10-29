@@ -4,11 +4,11 @@
 //  1. Vercel's @vercel/node builder type-checks every api/*.ts entrypoint against it. With no
 //     compilerOptions it falls back to non-strict + ES5, which makes zod infer every field as
 //     optional (TS1360) and collapses viem's account / chain / authorizationList types.
-//     Keep these options in sync with tsconfig.api.json. (DOM is in "lib" only because
-//     examples/paywall-server.ts needs HeadersInit; tsconfig.api.json stays ES2022-only and is
+//     Keep these options in sync with tsconfig.api.json. (DOM is in "lib" for tooling that
+//     touches fetch/HeadersInit, e.g. scripts/dev-server.ts; tsconfig.api.json stays ES2022-only and is
 //     still the stricter gate, since Vercel runs npm run build -> npm run typecheck.)
 //  2. VS Code attributes a file to a project whose "include" matches it. Without the include below,
-//     files only tsconfig.node.json covers (examples/, tests/, apps/, packages/, lib/dev/) got
+//     files only tsconfig.node.json covers (scripts/, tests/, apps/, packages/, lib/dev/) got
 //     attributed to tsconfig.app.json, whose types are ["vite/client"] - hence "Cannot find name
 //     'process'" in the editor while npm run typecheck passed.
 //
@@ -35,14 +35,15 @@
   "include": [
     "api",
     "lib",
-    "examples",
     "tests",
+    "scripts",
     "packages",
     "apps",
     "shared"
   ],
   "exclude": [
     "lib/openzeppelin-contracts",
-    "lib/forge-std"
+    "lib/forge-std",
+    "scripts/browser-e2e.ts"
   ]
 }

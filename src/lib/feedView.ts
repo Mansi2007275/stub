@@ -11,8 +11,11 @@ export function phaseOf(item: FeedItem): TicketPhase {
   return "locked";
 }
 
-export function ticketOf(item: FeedItem): TicketData {
+/** `feeBps` is the live contract rate; pass it so a still-locked ticket can show the real
+ * expected split instead of a dash. Nothing is assumed when it is absent. */
+export function ticketOf(item: FeedItem, feeBps?: number): TicketData {
   return {
+    feeBps,
     purchaseId: item.purchaseId,
     payer: item.payer,
     inputHash: item.inputHash,

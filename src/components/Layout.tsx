@@ -12,9 +12,14 @@ const LINKS = [
 export function Mark() {
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="7" fill="var(--ink)" />
-      <path d="M9 25V12a7 7 0 0 1 14 0v13" fill="none" stroke="var(--paper)" strokeWidth="3" />
-      <path d="M9 18h14" stroke="var(--usdc)" strokeWidth="3" />
+      <rect width="32" height="32" rx="8" fill="var(--ink)" />
+      <path
+        d="M21.4 10.3c-1.4-1.1-3.2-1.7-5.2-1.7-3.1 0-5.2 1.5-5.2 3.7 0 2.1 1.7 3.2 5 3.8 3.4.7 5.4 1.8 5.4 4.3 0 2.5-2.3 4.3-5.7 4.3-2.3 0-4.3-.7-5.8-2.1"
+        fill="none"
+        stroke="var(--yellow)"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

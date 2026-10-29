@@ -10,7 +10,7 @@ export function ConnectButton() {
 
   if (isConnected && chainId !== chain.id) {
     return (
-      <button className="btn small" onClick={() => switchChain({ chainId: chain.id })}>
+      <button className="btn small danger" onClick={() => switchChain({ chainId: chain.id })}>
         Switch to {chain.name}
       </button>
     );
@@ -18,7 +18,7 @@ export function ConnectButton() {
 
   if (isConnected) {
     return (
-      <button className="btn small ghost mono" onClick={() => disconnect()} title="Disconnect">
+      <button className="btn small wallet mono" onClick={() => disconnect()} title="Disconnect">
         {shortHex(address)}
       </button>
     );
@@ -27,7 +27,7 @@ export function ConnectButton() {
   const injected = connectors[0];
   return (
     <button
-      className="btn small"
+      className="btn small wallet"
       disabled={!injected || isPending}
       onClick={() => injected && connect({ connector: injected, chainId: chain.id })}
       title={error?.message}
