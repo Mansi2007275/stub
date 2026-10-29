@@ -33,6 +33,15 @@ export const explorerAddress = (a: string) => `${EXPLORER}/address/${a}`;
 /** Block of the escrow deploy tx; the browser feed fallback never scans before it. */
 export const DEPLOY_BLOCK = /^\d+$/.test(env.VITE_ESCROW_DEPLOY_BLOCK ?? "") ? BigInt(env.VITE_ESCROW_DEPLOY_BLOCK!) : undefined;
 
+/**
+ * Optional UI-only ceiling for per-call amounts, in USDC. StubEscrow has NO max-per-call constant
+ * (price is uint96), so nothing is capped unless an operator sets this. Never a silent default.
+ */
+export const MAX_PER_CALL = /^\d*\.?\d+$/.test(env.VITE_MAX_PER_CALL ?? "") ? Number(env.VITE_MAX_PER_CALL) : undefined;
+
+/** Smallest amount USDC can express at 6 decimals. */
+export const MIN_USDC = 0.000001;
+
 /** ERC-8004 IdentityRegistry (agent identities, ERC-721) — from docs.arc.io contract addresses. */
 export const IDENTITY_REGISTRY: Address =
   NETWORK === "mainnet" ? "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" : "0x8004A818BFB912233c491871b3d84c89A494BD9e";

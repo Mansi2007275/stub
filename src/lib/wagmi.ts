@@ -1,15 +1,18 @@
-import { createConfig, http } from "wagmi";
+import { createConfig } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { arc, arcTestnet } from "viem/chains";
+import { KNOWN_GOOD, RPC_URLS, makeTransport } from "./rpc";
+import { NETWORK } from "./config";
 
-const env = import.meta.env;
+// Both chains get a fallback transport, so one throttled endpoint never fails a purchase.
+const transportFor = (network: "mainnet" | "testnet") => makeTransport(network === NETWORK ? RPC_URLS : KNOWN_GOOD[network]);
 
 export const wagmiConfig = createConfig({
   chains: [arc, arcTestnet],
   connectors: [injected()],
   transports: {
-    [arc.id]: http(env.VITE_ARC_MAINNET_RPC_URL || "https://rpc.mainnet.arc.io"),
-    [arcTestnet.id]: http(env.VITE_ARC_TESTNET_RPC_URL || "https://rpc.testnet.arc.io"),
+    [arc.id]: transportFor("mainnet"),
+    [arcTestnet.id]: transportFor("testnet"),
   },
 });
 
