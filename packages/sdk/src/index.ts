@@ -79,6 +79,27 @@ export type StubClientOptions = {
 
 const ARC_USDC = "0x3600000000000000000000000000000000000000" as Address;
 
+
+/**
+ * Arc's RPCs index eth_getTransactionReceipt minutes after the block is produced, while
+ * eth_getTransactionByHash already reports the block, so viem's waitForTransactionReceipt rejects
+ * on transactions that in fact succeeded. This resolves from whichever source answers first and
+ * returns "unknown" instead of throwing on lag; callers settle it against the escrow, which is the
+ * real source of truth.
+ */
+async function waitMined(publicClient: PublicClient, hash: Hex, budgetMs = 90_000): Promise<"success" | "reverted" | "unknown"> {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      return (await publicClient.getTransactionReceipt({ hash })).status;
+    } catch {
+      // receipt not indexed yet - fall through and retry until the budget runs out
+    }
+    if (Date.now() >= deadline) return "unknown";
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}
+
 export class StubClient {
   private o: Required<Omit<StubClientOptions, "agentOf">> & { agentOf?: Address };
 
@@ -128,7 +149,7 @@ export class StubClient {
     const current = await publicClient.readContract({ address: usdc, abi: erc20Abi, functionName: "allowance", args: [this.account, escrow] });
     if (current >= amount) return undefined;
     const tx = await walletClient.writeContract({ address: usdc, abi: erc20Abi, functionName: "approve", args: [escrow, amount] });
-    await publicClient.waitForTransactionReceipt({ hash: tx });
+    if ((await waitMined(publicClient, tx)) === "reverted") throw new StubError("approve_reverted");
     return tx;
   }
 
@@ -196,8 +217,8 @@ export class StubClient {
       if (lockTx !== "0x") {
         p.lockTx = lockTx;
         await pending.set(k, p);
-        const r = await publicClient.waitForTransactionReceipt({ hash: lockTx });
-        if (r.status !== "success" && (await this.getPurchase(purchaseId)).status !== 1) {
+        const mined = await waitMined(publicClient, lockTx);
+        if (mined !== "success" && (await this.getPurchase(purchaseId)).status !== 1) {
           throw new StubError("lock_reverted", purchaseId); // keep pending: the same id is retried next time
         }
       }
@@ -233,7 +254,7 @@ export class StubClient {
   /** Reclaim a purchase whose deadline passed without delivery. */
   async refund(purchaseId: Hex): Promise<Hex> {
     const tx = await this.o.walletClient.writeContract({ address: this.o.escrow, abi: escrowAbi, functionName: "refund", args: [purchaseId] });
-    await this.o.publicClient.waitForTransactionReceipt({ hash: tx });
+    if ((await waitMined(this.o.publicClient, tx)) === "reverted") throw new StubError("refund_reverted", purchaseId);
     return tx;
   }
 }
