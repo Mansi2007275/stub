@@ -1,0 +1,14 @@
+# Deploy source only; production secrets are supplied by Vercel.
+.env
+.env.*
+.git
+.vercel
+node_modules
+dist
+.vite
+.arc-studio
+out
+cache
+broadcast
+lib/forge-std
+lib/openzeppelin-contracts

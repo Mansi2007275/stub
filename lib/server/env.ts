@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isAddress, type Address } from "viem";
+import { isGatewayKey } from "./gatewayKey.mjs";
 
 const address = z.string().refine(isAddress, "must be a 0x address").transform((v) => v as Address);
 
@@ -13,7 +14,7 @@ const PublicEnv = z.object({
 
 /** Secrets used only by /api/call. Validated lazily so read endpoints work without them. */
 const SecretEnv = z.object({
-  FULFILLER_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 0x-prefixed 32-byte hex key"),
+  FULFILLER_PRIVATE_KEY: z.string().refine(isGatewayKey, "must be a 0x-prefixed valid secp256k1 private key"),
   GEMINI_API_KEY: z.string().min(10),
   // Pinned, not *-latest: an alias can migrate to a model that is slower than the request
   // budget (gemini-3.8-flash took ~290s for one brief on the free tier). The two must differ,

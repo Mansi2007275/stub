@@ -54,6 +54,9 @@ export type BuyResult<T = PitchBrief> = {
   cached: boolean;
 };
 
+/** Gateway errors a retry with the SAME purchaseId can still resolve. None of them pay again. */
+const RETRYABLE = new Set(["in_progress", "network_error", "no_time_left", "fulfill_pending", "refund_pending"]);
+
 export class StubError extends Error {
   constructor(
     public code: string,
@@ -154,7 +157,7 @@ export class StubClient {
   }
 
   /**
-   * Full purchase: quote → (approve) → pay → sign → call. Safe to call again with the same input:
+   * Full purchase: quote → sign → (approve) → pay → call. Safe to call again with the same input:
    * an unfinished purchase is resumed, a finished one returns the stored result without paying.
    */
   async buy<T = PitchBrief>(args: { serviceId: bigint; input: string; maxPrice?: bigint }): Promise<BuyResult<T>> {
@@ -163,6 +166,7 @@ export class StubClient {
     const k = this.key(args.serviceId, inputHash);
     let p = await pending.get(k);
     let resumed = false;
+    let signature: Hex | undefined;
 
     if (p) {
       // Reconcile before anything else: did the previous attempt actually lock funds?
@@ -170,6 +174,10 @@ export class StubClient {
       if (onchain.status === 3) {
         await pending.delete(k);
         throw new StubError("refunded", p.purchaseId);
+      }
+      if (onchain.status === 1) {
+        const block = await publicClient.getBlock();
+        if (onchain.deadline - block.timestamp < 30n) throw new StubError("deadline_too_close", p.purchaseId);
       }
       if (onchain.status !== 0) resumed = true;
       // status 0: the lock never landed (or is still in flight). We re-send pay() with the SAME purchaseId below.
@@ -192,6 +200,9 @@ export class StubClient {
         p = { purchaseId, serviceId: args.serviceId.toString(), inputHash, createdAt: Date.now() };
         await pending.set(k, p); // persisted BEFORE sending: a crash after this point resumes with the same id
       }
+      // A wallet message prompt has no time bound. Complete it BEFORE locking funds, so it
+      // cannot consume the service's delivery window. A rejected prompt never starts payment.
+      signature = await walletClient.signMessage({ message: callMessage(purchaseId, inputHash) });
       if (!this.o.agentOf) await this.ensureAllowance(maxAmount);
 
       let lockTx: Hex;
@@ -224,7 +235,9 @@ export class StubClient {
       }
     }
 
-    const out = await this.collect<T>(p.purchaseId, args.input);
+    const out = signature
+      ? await this.collectAuthorized<T>(p.purchaseId, args.input, signature)
+      : await this.collect<T>(p.purchaseId, args.input);
     await pending.delete(k);
     return { ...out, lockTx: p.lockTx, resumed };
   }
@@ -232,6 +245,10 @@ export class StubClient {
   /** Ask the gateway for the result of an already-paid purchase. Retries never pay. */
   async collect<T = PitchBrief>(purchaseId: Hex, input: string): Promise<Omit<BuyResult<T>, "lockTx" | "resumed">> {
     const signature = await this.o.walletClient.signMessage({ message: callMessage(purchaseId, hashInput(input)) });
+    return this.collectAuthorized<T>(purchaseId, input, signature);
+  }
+
+  private async collectAuthorized<T>(purchaseId: Hex, input: string, signature: Hex): Promise<Omit<BuyResult<T>, "lockTx" | "resumed">> {
     let last: CallResponse<T> = { ok: false, error: "network_error" };
     for (let i = 0; i < this.o.retries; i++) {
       try {
@@ -242,7 +259,11 @@ export class StubClient {
         });
         last = (await r.json()) as CallResponse<T>;
         if (last.ok) return { purchaseId, result: last.result, resultHash: last.resultHash, fulfillTx: last.fulfillTx, cached: last.cached };
-        if (last.error !== "in_progress" && last.error !== "network_error") break;
+        // Retry only the outcomes that can still converge: another worker holds the lock, the
+        // response was lost, the gateway ran out of request budget, or a settlement tx is sent but
+        // not yet confirmed on-chain. A retry never pays again, and a pending settlement becomes
+        // the cached result once the escrow reports Fulfilled.
+        if (!RETRYABLE.has(last.error)) break;
       } catch {
         last = { ok: false, error: "network_error" };
       }

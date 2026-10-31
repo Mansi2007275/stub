@@ -20,6 +20,8 @@ export type Job = {
   updatedAt: number;
   deck?: Deck;
   error?: string;
+  /** Retain an already-paid purchase when collection fails, so its receipt stays reachable. */
+  purchaseId?: Hex;
   /** Evidence of the upstream purchase. Only USDC on Arc — never mixed with any app-internal credits. */
   stub?: { purchaseId: Hex; lockTx?: Hex; fulfillTx?: Hex; resultHash: Hex; resumed: boolean; brief: PitchBrief };
 };
@@ -157,6 +159,7 @@ export function createDeckBuilder(cfg: {
       } catch (e) {
         job.status = "failed";
         job.error = (e as { code?: string }).code ?? (e as Error).message;
+        job.purchaseId = (e as { purchaseId?: Hex }).purchaseId ?? job.purchaseId;
       }
       job.updatedAt = now();
       await cfg.jobs.put(job);

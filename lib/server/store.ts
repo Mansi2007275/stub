@@ -9,7 +9,7 @@ export interface Store {
 }
 
 export function upstashStore(url: string, token: string): Store {
-  const r = new Redis({ url, token, automaticDeserialization: false });
+  const r = new Redis({ url, token, automaticDeserialization: false, signal: () => AbortSignal.timeout(2_000), retry: { retries: 0 } });
   return {
     get: async (k) => ((await r.get<string>(k)) as string | null) ?? null,
     set: async (k, v, o) => {
@@ -57,5 +57,6 @@ export const keys = {
   result: (id: string) => `stub:result:${id}`,
   lock: (id: string) => `stub:lock:${id}`,
   failed: (id: string) => `stub:failed:${id}`,
+  settlement: (id: string) => `stub:settlement:${id}`,
   rate: (ip: string) => `stub:rate:${ip}`,
 };

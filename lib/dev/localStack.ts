@@ -152,7 +152,7 @@ export async function startLocalStack(opts: {
     escrow,
     serviceId: 1n,
     store,
-    generate: (i) => generate(i),
+    generate: (i, o) => generate(i, o),
   });
   let deps = makeDeps();
 

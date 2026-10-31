@@ -90,12 +90,15 @@ export function Deck() {
             <input type="checkbox" checked={useStub} disabled={busy} onChange={(e) => setUseStub(e.target.checked)} />
             <span>Buy the analysis from Stub</span>
           </label>
-          <p className="hint">Off: the deck is built from your idea alone, nothing is paid. This is the app's feature flag.</p>
+          <p className="hint">{useStub ? "On: buy an analyst brief, then build slides from it." : "Off: build from your idea alone, with no payment."}</p>
           <button className="btn" style={{ width: "100%", marginTop: 12 }} disabled={!ready} onClick={() => void build()}>
             {busy ? stage : useStub ? `Pay ${priceLabel} and build deck` : "Build deck without Stub"}
           </button>
           {useStub && isConnected && !onChain && <p className="form-error">Switch your wallet to {chain.name}.</p>}
           {job?.status === "failed" && <p className="form-error">{ERRORS[job.error ?? ""] ?? `Couldn't build the deck: ${job.error}`}</p>}
+          {job?.status === "failed" && job.purchaseId && (
+            <p><Link to={`/receipt/${job.purchaseId}`}>View this purchase's status and refund eligibility</Link></p>
+          )}
 
           {job?.stub && (
             <div className="evidence">

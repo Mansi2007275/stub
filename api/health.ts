@@ -1,6 +1,7 @@
 import { handler } from "../lib/server/http.js";
 import { geminiPing } from "../lib/server/pitchBrief.js";
 import { keys, upstashStore } from "../lib/server/store.js";
+import { GatewayKeyError, parseGatewayKey } from "../lib/server/gatewayKey.mjs";
 
 /**
  * GET /api/health — tells you which config is present (names only, never values).
@@ -9,9 +10,21 @@ import { keys, upstashStore } from "../lib/server/store.js";
  */
 export default handler(["GET"], async (req, res) => {
   const has = (k: string) => Boolean(process.env[k]);
+  let fulfillerAddress: string | null = null;
+  let fulfillerKeyError: string | null = null;
+  try {
+    const key = process.env.FULFILLER_PRIVATE_KEY;
+    if (key) fulfillerAddress = parseGatewayKey(key).address;
+    else fulfillerKeyError = "missing";
+  } catch (error) {
+    fulfillerKeyError = error instanceof GatewayKeyError ? error.code : "validation_unavailable";
+  }
   const out: Record<string, unknown> = {
     ok: true,
     network: process.env.VITE_CHAIN ?? "testnet",
+    fulfillerAddress,
+    fulfillerKeyValid: fulfillerAddress !== null,
+    fulfillerKeyError,
     configured: {
       escrow: has("VITE_ESCROW_ADDRESS"),
       fulfillerKey: has("FULFILLER_PRIVATE_KEY"),

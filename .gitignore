@@ -21,3 +21,11 @@ dist/
 .arc-studio/
 
 .vite/
+
+# Local signing material and raw deployment journals
+*.key
+*.pem
+*.keystore
+keystores/
+.keystores/
+/broadcast/
