@@ -1,5 +1,5 @@
 import { createWalletClient, http } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { parseGatewayKey } from "./gatewayKey.mjs";
 import { getChain } from "./chain.js";
 import { secretEnv } from "./env.js";
 import { geminiGenerator } from "./pitchBrief.js";
@@ -12,7 +12,7 @@ export function productionDeps(): Deps {
   const s = secretEnv();
   const rpc = process.env.VITE_CHAIN === "mainnet" ? process.env.ARC_MAINNET_RPC_URL : process.env.ARC_TESTNET_RPC_URL;
   const wallet = createWalletClient({
-    account: privateKeyToAccount(s.FULFILLER_PRIVATE_KEY as `0x${string}`),
+    account: parseGatewayKey(s.FULFILLER_PRIVATE_KEY),
     chain,
     transport: http(rpc || chain.rpcUrls.default.http[0], { timeout: 10_000, retryCount: 2 }),
   });

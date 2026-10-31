@@ -4,12 +4,12 @@
  * Only the AI provider is a deterministic fake. Not testnet or mainnet evidence.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { keccak256, parseUnits, stringToBytes, toHex, type Hex } from "viem";
 import { escrowAbi } from "../shared/escrowAbi";
 import { hashInput, type PitchBrief } from "../shared/protocol";
 import { startLocalStack, DEV_KEYS, PRICE, type LocalStack } from "../lib/dev/localStack";
-import { StubClient, StubError, memoryPending, type PendingStore } from "../packages/sdk/src/index";
+import { StubClient, StubError, memoryPending, localStoragePending, type PendingStore } from "../packages/sdk/src/index";
 import { canonicalJson, ProviderError } from "../lib/server/pitchBrief";
 import { keys } from "../lib/server/store";
 import { processCall } from "../lib/server/callCore";
@@ -35,13 +35,13 @@ const goodGenerate = async (idea: string) => {
 };
 const idea = (tag: string) => `${tag} — ${Math.random().toString(36).slice(2)} a marketplace for idle lab equipment`;
 
-const client = (opts: { who?: "buyer" | "agent"; pending?: PendingStore; fetch?: typeof fetch; agentOf?: `0x${string}`; retries?: number } = {}) =>
+const client = (opts: { who?: "buyer" | "agent"; wallet?: ReturnType<LocalStack["wallet"]>; pending?: PendingStore; fetch?: typeof fetch; agentOf?: `0x${string}`; retries?: number } = {}) =>
   new StubClient({
     apiBase: s.apiBase,
     escrow: s.escrow,
     usdc: s.usdc,
     publicClient: s.client,
-    walletClient: s.wallet(opts.who ?? "buyer"),
+    walletClient: opts.wallet ?? s.wallet(opts.who ?? "buyer"),
     pending: opts.pending,
     fetch: opts.fetch,
     agentOf: opts.agentOf,
@@ -258,6 +258,62 @@ describe("Deck Builder consumer (tests #10, #11)", () => {
   });
 });
 
+describe("LOCAL ONLY: Deck recovery across fresh instances with browser-like storage", () => {
+  const browserStorage = () => {
+    const values = new Map<string, string>();
+    return { values, getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
+  };
+
+  it("recovers a delivered response lost before reload, with the original input and no second payment", async () => {
+    const storage = browserStorage();
+    vi.stubGlobal("localStorage", storage);
+    try {
+      const input = idea("reload-pending");
+      const lostResponse: typeof fetch = async (url, init) => {
+        const response = await fetch(url, init);
+        if (String(url).endsWith("/call")) throw new TypeError("response_lost_after_delivery");
+        return response;
+      };
+      const first = createDeckBuilder({ jobs: memoryJobs(), generate: templateDeck, useStub: true, stub: client({ pending: localStoragePending("reload:"), fetch: lostResponse, retries: 1 }) });
+      expect((await first.run("reload-job", input)).status).toBe("failed");
+      const saved = JSON.parse([...storage.values.values()][0]) as { purchaseId: Hex };
+      expect((await client().getPurchase(saved.purchaseId)).status).toBe(2);
+      const balances = await s.balance(s.address("buyer"));
+      const nonces = await Promise.all(["buyer", "fulfiller"].map((who) => s.client.getTransactionCount({ address: s.address(who as "buyer" | "fulfiller") })));
+      const generations = generateCalls;
+      const reloaded = createDeckBuilder({ jobs: memoryJobs(), generate: templateDeck, useStub: true, stub: client({ pending: localStoragePending("reload:") }) });
+      const job = await reloaded.run("reload-job", input);
+      expect(job.status).toBe("done");
+      expect(job.stub?.purchaseId).toBe(saved.purchaseId);
+      expect(job.stub?.resumed).toBe(true);
+      expect(generateCalls).toBe(generations);
+      expect(await s.balance(s.address("buyer"))).toBe(balances);
+      expect(await Promise.all(["buyer", "fulfiller"].map((who) => s.client.getTransactionCount({ address: s.address(who as "buyer" | "fulfiller") })))).toEqual(nonces);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("documents completed-job reload persistence is absent, blocking a new quote before any second payment", async () => {
+    const storage = browserStorage();
+    vi.stubGlobal("localStorage", storage);
+    try {
+      const input = idea("reload-completed");
+      const first = createDeckBuilder({ jobs: memoryJobs(), generate: templateDeck, useStub: true, stub: client({ pending: localStoragePending("complete:") }) });
+      expect((await first.run("completed-job", input)).status).toBe("done");
+      expect(storage.values.size).toBe(0); // Completed SDK pending entries are removed.
+      const balance = await s.balance(s.address("buyer"));
+      let quoteAttempts = 0;
+      const stopBeforePurchase: typeof fetch = async (url) => {
+        if (String(url).endsWith("/quote")) quoteAttempts++;
+        throw new Error("new_purchase_blocked_for_reload_check");
+      };
+      const reloaded = createDeckBuilder({ jobs: memoryJobs(), generate: templateDeck, useStub: true, stub: client({ pending: localStoragePending("complete:"), fetch: stopBeforePurchase }) });
+      expect((await reloaded.run("completed-job", input)).status).toBe("failed");
+      expect(quoteAttempts).toBe(1);
+      expect(await s.balance(s.address("buyer"))).toBe(balance);
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
 describe("No secrets in responses, logs or the browser bundle (test #12)", () => {
   const SECRETS = [DEV_KEYS.fulfiller, DEV_KEYS.fulfiller.slice(2)];
 
@@ -300,5 +356,97 @@ describe("No secrets in responses, logs or the browser bundle (test #12)", () =>
     const js = readdirSync("dist/assets").filter((f) => f.endsWith(".js")).map((f) => readFileSync(`dist/assets/${f}`, "utf8")).join("\n");
     for (const name of ["FULFILLER_PRIVATE_KEY", "GEMINI_API_KEY", "UPSTASH_REDIS_REST_TOKEN", "ARC_STUDIO_TOKEN"]) expect(js).not.toContain(name);
     expect(js).not.toMatch(/AIza[0-9A-Za-z_-]{20,}/);
+  });
+});
+
+describe("LOCAL ONLY: authorization timing and expired Deck recovery", () => {
+  it("keeps an open authorization prompt outside the paid delivery window", async () => {
+    const pending = memoryPending();
+    const input = idea("authorization-before-payment");
+    const before = await s.balance(s.address("buyer"));
+    const writes: string[] = [];
+    let signalPrompt!: () => void;
+    let releasePrompt!: () => void;
+    const prompted = new Promise<void>((resolve) => { signalPrompt = resolve; });
+    const released = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    const real = s.wallet("buyer");
+    const wallet = new Proxy(real, {
+      get(target, property, receiver) {
+        if (property === "signMessage") return async (...args: unknown[]) => {
+          signalPrompt();
+          await released;
+          return Reflect.apply(target.signMessage, target, args);
+        };
+        if (property === "writeContract") return async (...args: unknown[]) => {
+          writes.push((args[0] as { functionName: string }).functionName);
+          return Reflect.apply(target.writeContract, target, args);
+        };
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const buying = client({ wallet, pending }).buy({ serviceId: 1n, input });
+    await prompted;
+    try {
+      const saved = await pending.get(`${s.address("buyer").toLowerCase()}:1:${hashInput(input)}`);
+      expect(saved).not.toBeNull();
+      expect((await client().getPurchase(saved!.purchaseId)).status).toBe(0);
+      expect(await s.balance(s.address("buyer"))).toBe(before);
+      expect(writes).toEqual([]);
+    } finally { releasePrompt(); }
+    const out = await buying;
+    expect((await client().getPurchase(out.purchaseId)).status).toBe(2);
+    expect(writes.filter((name) => name === "pay")).toHaveLength(1);
+  });
+
+  it("authorization rejection sends neither approval nor payment", async () => {
+    const real = s.wallet("buyer");
+    const write = vi.fn();
+    const wallet = new Proxy(real, {
+      get(target, property, receiver) {
+        if (property === "signMessage") return async () => { throw Object.assign(new Error("user_rejected"), { code: 4001 }); };
+        if (property === "writeContract") return write;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const before = await s.balance(s.address("buyer"));
+    await expect(client({ wallet }).buy({ serviceId: 1n, input: idea("authorization-rejected") })).rejects.toMatchObject({ code: 4001 });
+    expect(write).not.toHaveBeenCalled();
+    expect(await s.balance(s.address("buyer"))).toBe(before);
+  });
+
+  it("expired resume preserves idea, pending purchase and receipt identity without signing or paying again", async () => {
+    const pending = memoryPending();
+    const input = idea("expired-deck-resume");
+    const disconnected: typeof fetch = async (url, init) => {
+      if (String(url).endsWith("/call")) throw new TypeError("collection_not_sent");
+      return fetch(url, init);
+    };
+    await expect(client({ pending, fetch: disconnected, retries: 1 }).buy({ serviceId: 1n, input })).rejects.toBeInstanceOf(StubError);
+    const key = `${s.address("buyer").toLowerCase()}:1:${hashInput(input)}`;
+    const saved = (await pending.get(key))!;
+    expect((await client().getPurchase(saved.purchaseId)).status).toBe(1);
+    // Only this isolated Anvil chain is advanced. No mainnet request or signer is involved.
+    await s.client.request({ method: "evm_increaseTime", params: [601] } as never);
+    await s.client.request({ method: "evm_mine", params: [] } as never);
+    const real = s.wallet("buyer"), sign = vi.fn(), write = vi.fn();
+    const wallet = new Proxy(real, {
+      get(target, property, receiver) {
+        if (property === "signMessage") return sign;
+        if (property === "writeContract") return write;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const before = await s.balance(s.address("buyer"));
+    const builder = createDeckBuilder({ jobs: memoryJobs(), generate: templateDeck, useStub: true, stub: client({ wallet, pending }) });
+    const job = await builder.run("expired-job", input);
+    expect(job.status).toBe("failed");
+    expect(job.error).toBe("deadline_too_close");
+    expect(job.idea).toBe(input);
+    expect(job.purchaseId).toBe(saved.purchaseId);
+    expect(job.deck).toBeUndefined();
+    expect((await pending.get(key))?.purchaseId).toBe(saved.purchaseId);
+    expect(sign).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(await s.balance(s.address("buyer"))).toBe(before);
   });
 });

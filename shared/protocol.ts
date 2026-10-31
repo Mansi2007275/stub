@@ -26,7 +26,13 @@ export type PitchBrief = {
 
 export type CallResponse<T = PitchBrief> =
   | { ok: true; purchaseId: Hex; result: T; resultHash: Hex; fulfillTx?: Hex; cached: boolean }
-  | { ok: false; error: string; refunded?: boolean; refundTx?: Hex; detail?: string };
+  /**
+   * `pending: true` means a settlement transaction's outcome is not yet known (Arc can leave a
+   * receipt unindexed for minutes). It is NOT a failure and NOT a completed refund: retry the same
+   * purchaseId, or read GET /api/purchase/:id. `refunded: true` is only ever set once the escrow
+   * itself reports Refunded.
+   */
+  | { ok: false; error: string; refunded?: boolean; refundTx?: Hex; fulfillTx?: Hex; resultHash?: Hex; pending?: boolean; detail?: string };
 
 /** Deterministic JSON (sorted object keys) so anyone holding a result can recompute its on-chain hash. */
 export const canonicalJson = (v: unknown): string =>

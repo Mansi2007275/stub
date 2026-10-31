@@ -37,12 +37,15 @@ export const loadPending = (): Pending | null => {
 
 async function postCall(body: { purchaseId: Hex; input: string; signature: Hex }): Promise<CallResponse> {
   // Bounded retries with the SAME purchaseId: a lost response never leads to a second payment.
+  // Retried outcomes are the ones that can still converge: another worker holds the lock, the
+  // gateway ran out of request budget, or a settlement tx is sent but not yet confirmed on-chain.
+  const retryable = new Set(["in_progress", "no_time_left", "fulfill_pending", "refund_pending"]);
   let last: CallResponse = { ok: false, error: "network_error" };
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const r = await fetch(`${API_BASE}/call`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       last = (await r.json()) as CallResponse;
-      if (r.status !== 409 || last.ok || last.error !== "in_progress") return last;
+      if (last.ok || !retryable.has(last.error)) return last;
     } catch {
       last = { ok: false, error: "network_error" };
     }
@@ -220,8 +223,14 @@ export const ERRORS: Record<string, string> = {
   input_mismatch: "The idea text changed after payment. Use exactly the text you paid for.",
   provider_failed: "The generator failed. Your USDC has been refunded.",
   refunded: "This purchase was refunded.",
-  deadline_too_close: "The delivery window is almost over. Wait for the deadline, then refund from the receipt page.",
+  deadline_too_close: "Too little delivery time remains to start this purchase. Check its receipt; if it is still locked after the deadline, you can refund there.",
   in_progress: "Still generating. Check the receipt page in a minute.",
+  // Settlement sent but not yet confirmed on-chain. Not a failure, and nothing more to pay.
+  fulfill_pending: "Your result is ready and the release is on its way. Reload the receipt page in a minute - do not pay again.",
+  refund_pending: "The generator failed and a refund has been sent, but it isn't confirmed yet. Check the receipt page in a minute.",
+  refund_reverted: "The generator failed and the automatic refund didn't go through. You can refund from the receipt page once the deadline passes.",
+  fulfill_reverted: "The release transaction failed. Your USDC is still in escrow; retry, or refund from the receipt page after the deadline.",
+  no_time_left: "The gateway ran out of time before starting. Retry - you have not been charged again.",
   rate_limited: "Too many requests. Try again in a minute.",
   not_configured: "The gateway isn't configured yet.",
   network_error: "Couldn't reach the gateway. Your payment is safe; retry without paying again.",
