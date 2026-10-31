@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // Run repository tests only, not ignored deployment snapshots under .vercel/.
+    include: ["tests/**/*.test.ts"],
     // E2E tests start anvil and deploy contracts — generous per-test timeout
     testTimeout: 120_000,
     hookTimeout: 90_000,

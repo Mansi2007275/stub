@@ -1,0 +1,1 @@
+export function acceptanceWallet<T extends object>(wallet: T, role: "buyer" | "gateway", manifest: unknown, hooks?: { preflight?: (request: any, operation: string) => Promise<void>; reserve?: (request: any, operation: string) => Promise<void>; record?: (hash: string, request: any, operation: string) => Promise<void> }): T;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { isHex, size, type Hex } from "viem";
@@ -88,21 +88,25 @@ export function Receipt() {
     functionName: "getPurchase",
     chainId: chain.id,
     args: valid ? [id] : undefined,
-    query: { enabled: isDeployed && valid },
+    query: { enabled: isDeployed && valid, refetchInterval: 5_000 },
   });
 
   const { address } = useAccount();
   const { writeContract, data: refundTx, isPending, error: refundError } = useWriteContract();
-  const { isSuccess: refunded } = useWaitForTransactionReceipt({ hash: refundTx, chainId: chain.id });
+  const { data: refundReceipt } = useWaitForTransactionReceipt({ hash: refundTx, chainId: chain.id });
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const status = data ? STATUS[data.status] : undefined;
+  const refunded = status === "Refunded";
+  const refundPending = !!refundTx && status === "Locked" && refundReceipt?.status !== "reverted";
   const me = address?.toLowerCase();
-  const canRefund = useMemo(() => {
-    if (status !== "Locked" || !me) return false;
-    if (me !== data?.payer.toLowerCase() && me !== data?.buyer.toLowerCase()) return false;
-    // oxlint-disable-next-line react/purity -- deadline comparison needs current time, intentional
-    return Date.now() / 1000 > Number(data?.deadline ?? 0);
-  }, [status, me, data?.payer, data?.buyer, data?.deadline]);
+  const canRefund = status === "Locked" && !!me &&
+    (me === data?.payer.toLowerCase() || me === data?.buyer.toLowerCase()) &&
+    now / 1000 > Number(data?.deadline ?? 0);
   const fee = data ? (data.amount * BigInt(data.feeBps)) / 10_000n : 0n;
   const phase: TicketPhase = status === "Fulfilled" ? "released" : status === "Refunded" ? "refunded" : "locked";
 
@@ -196,15 +200,16 @@ export function Receipt() {
               <div style={{ marginTop: 20 }}>
                 <button
                   className="btn danger"
-                  disabled={isPending}
+                  disabled={isPending || refundPending}
                   onClick={() => writeContract({ address: ESCROW_ADDRESS!, abi: escrowAbi, functionName: "refund", args: [id as Hex], chainId: chain.id })}
                 >
-                  {isPending ? "Confirm in wallet" : "Refund my USDC"}
+                  {isPending ? "Confirm in wallet" : refundPending ? "Refund pending confirmation" : "Refund my USDC"}
                 </button>
                 <p className="muted" style={{ fontSize: "var(--t-sm)" }}>
                   The delivery deadline passed without a result, so you can take the full amount back.
                 </p>
                 {refundError && <p className="form-error">{refundError.message.split("\n")[0]}</p>}
+                {refundReceipt?.status === "reverted" && <p className="form-error">The refund transaction reverted. Your funds remain in escrow.</p>}
               </div>
             )}
             {refunded && (

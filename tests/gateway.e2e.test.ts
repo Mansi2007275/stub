@@ -20,7 +20,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import { escrowAbi } from "../lib/server/escrowAbi";
 import { processCall, type Deps } from "../lib/server/callCore";
-import { memoryStore } from "../lib/server/store";
+import { keys, memoryStore } from "../lib/server/store";
 import { freePort } from "../lib/dev/localStack";
 import { ProviderError } from "../lib/server/pitchBrief";
 import { callMessage, hashInput, type PitchBrief } from "../shared/protocol";
@@ -238,5 +238,212 @@ describe("Stub gateway — local chain", () => {
     const signature = await wallet("stranger").signMessage({ message: callMessage(purchaseId, hashInput(IDEA)) });
     const out = await processCall(deps(), { purchaseId, input: IDEA, signature });
     expect(out.status).toBe(200);
+  });
+});
+
+/**
+ * Regression cover for the two documented launch blockers:
+ *  1. generation + fulfil confirmation could exceed /api/call's 60s function limit;
+ *  2. the early-refund path waited on a receipt with no bound, unlike the fulfil path.
+ * Both now run against one request budget and settle against on-chain purchase state, so an
+ * unknown transaction is reported as pending - never as failed, and never as a completed refund.
+ */
+describe("Stub gateway - bounded request budget and settlement reporting", () => {
+  /** A client whose actions can be selectively replaced. viem clients are plain objects. */
+  const lagging = (over: Record<string, unknown>): PublicClient => ({ ...client, ...over }) as unknown as PublicClient;
+  /** Arc leaves eth_getTransactionReceipt null for minutes after the block. */
+  const receiptNeverIndexed = {
+    getTransactionReceipt: async () => {
+      throw new Error("receipt not indexed yet");
+    },
+  };
+  /** The escrow read also cannot see the settlement yet, so the outcome is genuinely unknown. */
+  const statusStuckLocked = {
+    readContract: async (a: { functionName: string }) =>
+      a.functionName === "statusOf" ? 1 : await client.readContract(a as Parameters<PublicClient["readContract"]>[0]),
+  };
+
+  it("bounds a hung purchase RPC without invoking the provider", async () => {
+    const { purchaseId, signature } = await buy();
+    const before = generateCalls;
+    const started = Date.now();
+    const out = await processCall(deps({ requestBudgetMs: 1_800, client: lagging({ readContract: () => new Promise(() => {}) }) }), { purchaseId, input: IDEA, signature });
+    expect(out.body).toMatchObject({ error: "no_time_left" });
+    expect(Date.now() - started).toBeLessThan(1_800);
+    expect(generateCalls).toBe(before);
+  });
+
+  it("bounds a hung Redis read without invoking the provider", async () => {
+    const { purchaseId, signature } = await buy();
+    const before = generateCalls;
+    const started = Date.now();
+    const out = await processCall(deps({ requestBudgetMs: 1_800, store: { ...store, get: () => new Promise(() => {}) } }), { purchaseId, input: IDEA, signature });
+    expect(out.body).toMatchObject({ error: "no_time_left" });
+    expect(Date.now() - started).toBeLessThan(1_800);
+    expect(generateCalls).toBe(before);
+  });
+
+  it("reports an authorization RPC deadline as retryable rather than a bad signature", async () => {
+    const { purchaseId, signature } = await buy();
+    const before = generateCalls;
+    const out = await processCall(deps({ requestBudgetMs: 1_800, client: lagging({ verifyMessage: () => new Promise(() => {}) }) }), { purchaseId, input: IDEA, signature });
+    expect(out.status).toBe(503);
+    expect(out.body).toMatchObject({ error: "no_time_left" });
+    expect(generateCalls).toBe(before);
+  });
+
+  it("bounds a hung confirmation RPC and reports pending", async () => {
+    const { purchaseId, signature } = await buy();
+    const out = await processCall(deps({ confirmBudgetMs: 50, client: lagging({
+      readContract: (a: { functionName: string }) => a.functionName === "statusOf" ? new Promise(() => {}) : client.readContract(a as Parameters<PublicClient["readContract"]>[0]),
+    }) }), { purchaseId, input: IDEA, signature });
+    expect(out.status).toBe(202);
+    expect(out.body).toMatchObject({ error: "fulfill_pending", pending: true });
+  });
+
+  it("never blindly rebroadcasts after a send loses its response", async () => {
+    const { purchaseId, signature } = await buy();
+    let sends = 0;
+    const before = generateCalls;
+    const uncertainWallet = { ...wallet("fulfiller"), writeContract: async () => { sends++; throw new Error("connection lost after submission"); } } as Deps["wallet"];
+    const buyerBefore = await bal(acct("buyer").address);
+    const first = await processCall(deps({ wallet: uncertainWallet }), { purchaseId, input: IDEA, signature });
+    const again = await processCall(deps({ wallet: uncertainWallet }), { purchaseId, input: IDEA, signature });
+    expect(first.body).toMatchObject({ error: "fulfill_pending", pending: true });
+    expect(again.body).toMatchObject({ error: "fulfill_pending", pending: true });
+    expect(sends).toBe(1);
+    expect(generateCalls - before).toBe(1);
+    expect(await bal(acct("buyer").address)).toBe(buyerBefore);
+  });
+
+  it("retains a failed-provider outcome across retries without regenerating", async () => {
+    const { purchaseId, signature } = await buy();
+    let sends = 0;
+    const before = generateCalls;
+    failNext = true;
+    const uncertainWallet = { ...wallet("fulfiller"), writeContract: async () => { sends++; throw new Error("response lost"); } } as Deps["wallet"];
+    const first = await processCall(deps({ wallet: uncertainWallet }), { purchaseId, input: IDEA, signature });
+    const again = await processCall(deps({ wallet: uncertainWallet }), { purchaseId, input: IDEA, signature });
+    expect(first.body).toMatchObject({ error: "refund_pending", pending: true });
+    expect(again.body).toMatchObject({ error: "refund_pending", pending: true });
+    expect(sends).toBe(1);
+    expect(generateCalls - before).toBe(1);
+    // If a previous worker failed before broadcasting, the saved failure still takes the refund path.
+    await store.del(keys.settlement(purchaseId));
+    const recovered = await processCall(deps(), { purchaseId, input: IDEA, signature });
+    expect(recovered.body).toMatchObject({ refunded: true });
+    expect(generateCalls - before).toBe(1);
+  });
+
+  it("confirms a fulfil from the escrow when the receipt is never indexed", async () => {
+    const { purchaseId, signature } = await buy();
+    const out = await processCall(deps({ client: lagging(receiptNeverIndexed) }), { purchaseId, input: IDEA, signature });
+    expect(out.status).toBe(200);
+    expect(out.body).toMatchObject({ ok: true, cached: false });
+    const p = await client.readContract({ address: escrow, abi: escrowAbi, functionName: "getPurchase", args: [purchaseId] });
+    expect(p.status).toBe(2);
+  });
+
+  it("reports an unconfirmable fulfil as pending, not failed, and the retry delivers the stored result", async () => {
+    const { purchaseId, signature } = await buy();
+    const before = generateCalls;
+    const out = await processCall(deps({ client: lagging({ ...receiptNeverIndexed, ...statusStuckLocked }), confirmBudgetMs: 1_200 }), {
+      purchaseId,
+      input: IDEA,
+      signature,
+    });
+    expect(out.status).toBe(202);
+    expect(out.body).toMatchObject({ ok: false, error: "fulfill_pending", pending: true });
+    if (out.body.ok) throw new Error("expected pending");
+    expect(out.body.refunded).toBeUndefined(); // nothing was refunded
+    expect(out.body.fulfillTx).toBeDefined();
+
+    // The release did land; the escrow is the authority. A retry returns the same result, unpaid.
+    const buyerBefore = await bal(acct("buyer").address);
+    const retry = await processCall(deps(), { purchaseId, input: IDEA, signature });
+    expect(retry.status).toBe(200);
+    expect(retry.body).toMatchObject({ ok: true, cached: true });
+    expect(retry.body.ok && retry.body.resultHash).toBe(out.body.resultHash);
+    expect(generateCalls - before).toBe(1); // the provider ran once
+    expect(await bal(acct("buyer").address)).toBe(buyerBefore); // and was never charged twice
+  });
+
+  it("confirms an early refund from the escrow when the receipt is never indexed", async () => {
+    const start = await bal(acct("buyer").address);
+    const { purchaseId, signature } = await buy();
+    failNext = true;
+    const out = await processCall(deps({ client: lagging(receiptNeverIndexed) }), { purchaseId, input: IDEA, signature });
+    expect(out.status).toBe(502);
+    expect(out.body).toMatchObject({ ok: false, error: "provider_failed", refunded: true });
+    expect(await bal(acct("buyer").address)).toBe(start);
+  });
+
+  it("reports an unconfirmable early refund as pending and never as refunded", async () => {
+    const { purchaseId, signature } = await buy();
+    failNext = true;
+    const out = await processCall(
+      deps({ client: lagging({ ...receiptNeverIndexed, ...statusStuckLocked }), confirmBudgetMs: 1_200 }),
+      { purchaseId, input: IDEA, signature },
+    );
+    expect(out.status).toBe(202);
+    expect(out.body).toMatchObject({ ok: false, error: "refund_pending", pending: true });
+    if (out.body.ok) throw new Error("expected pending");
+    expect(out.body.refunded).toBeUndefined();
+    expect(out.body.refundTx).toBeDefined();
+
+    // It did land on-chain, so the next read settles it as refunded rather than claiming it early.
+    const again = await processCall(deps(), { purchaseId, input: IDEA, signature });
+    expect(again.status).toBe(409);
+    expect(again.body).toMatchObject({ error: "refunded", refunded: true });
+  });
+
+  it("bounds generation by the remaining request budget and refunds instead of overrunning", async () => {
+    const start = await bal(acct("buyer").address);
+    const { purchaseId, signature } = await buy();
+    const started = Date.now();
+    const out = await processCall(
+      // 24s budget - 18s settlement reserve leaves generation ~6s, well inside the 60s limit.
+      deps({ requestBudgetMs: 24_000, generate: () => new Promise(() => {}) }),
+      { purchaseId, input: IDEA, signature },
+    );
+    expect(Date.now() - started).toBeLessThan(24_000);
+    expect(out.status).toBe(502);
+    expect(out.body).toMatchObject({ ok: false, error: "provider_failed", refunded: true, detail: "provider_timeout" });
+    expect(await bal(acct("buyer").address)).toBe(start);
+  });
+
+  it("passes the remaining budget to the generator so it can abort itself first", async () => {
+    const { purchaseId, signature } = await buy();
+    let hint: number | undefined;
+    const out = await processCall(
+      deps({
+        requestBudgetMs: 30_000,
+        generate: async (_i, o) => {
+          hint = o?.timeoutMs;
+          return brief;
+        },
+      }),
+      { purchaseId, input: IDEA, signature },
+    );
+    expect(out.status).toBe(200);
+    expect(hint).toBeGreaterThan(0);
+    expect(hint).toBeLessThanOrEqual(30_000 - 18_000); // request budget minus the settlement reserve
+  });
+
+  it("will not start work when too little budget is left to settle, and leaves the purchase recoverable", async () => {
+    const { purchaseId, signature } = await buy();
+    const before = generateCalls;
+    const out = await processCall(deps({ requestBudgetMs: 19_000 }), { purchaseId, input: IDEA, signature });
+    expect(out.status).toBe(503);
+    expect(out.body).toMatchObject({ ok: false, error: "no_time_left" });
+    if (out.body.ok) throw new Error("expected failure");
+    expect(out.body.refunded).toBeUndefined();
+    expect(generateCalls).toBe(before); // nothing was spent on the provider
+    const p = await client.readContract({ address: escrow, abi: escrowAbi, functionName: "getPurchase", args: [purchaseId] });
+    expect(p.status).toBe(1); // still Locked: the same purchase can be retried
+
+    const retry = await processCall(deps(), { purchaseId, input: IDEA, signature });
+    expect(retry.status).toBe(200);
+    expect(retry.body).toMatchObject({ ok: true, cached: false });
   });
 });
